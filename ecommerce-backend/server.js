@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";
 
@@ -10,6 +11,33 @@ import authRoutes from "./routes/authRoutes.js";
 dotenv.config();
 
 const app = express();
+
+// Permit the local Vite app and the deployed storefront to call this API.
+// CLIENT_URL can contain a comma-separated list when more frontends are added.
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "https://ecommerce-project-three-peach.vercel.app",
+  ...(process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+]);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Requests without an Origin header include server-to-server calls and
+      // health checks, which are safe to allow through the CORS middleware.
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} is not allowed by CORS`));
+    },
+  }),
+);
 
 app.use(express.json());
 

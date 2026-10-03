@@ -3,6 +3,8 @@
 Install dependencies with `npm install`, configure `.env` using `.env.example`,
 then start the API with `npm run dev`. Keep `JWT_SECRET` private and stable so
 existing tokens remain valid. The server requires `MONGODB_URI` and `JWT_SECRET`.
+Set `CLIENT_URL` to the deployed frontend origin. Multiple allowed origins can
+be supplied as a comma-separated list.
 
 ## Authentication
 
