@@ -18,7 +18,7 @@ export function PaymentSummary() {
   };
 
   return (
-    <section className="row-start-1 mb-3 rounded border border-[#dedede] p-[18px] pb-[5px] min-[1001px]:row-auto min-[1001px]:mb-0">
+    <section className="row-start-1 mb-3 rounded border border-[#dedede] p-4 pb-[5px] sm:p-[18px] sm:pb-[5px] min-[1001px]:row-auto min-[1001px]:mb-0">
       <div className="mb-3 text-lg font-bold">
         Payment Summary
       </div>

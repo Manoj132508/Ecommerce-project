@@ -23,28 +23,29 @@ export function CheckoutPage() {
     <>
       <title>Checkout</title>
 
-      <header className="fixed inset-x-0 top-0 z-50 flex h-[60px] justify-center bg-white px-[30px]">
-        <div className="flex w-full max-w-[1100px] items-center">
-          <div className="w-auto min-[576px]:w-[200px]">
-            <Link to="/" className="inline-block cursor-pointer rounded-[2px] border border-transparent px-[9.5px] py-1.5 no-underline hover:border-[#198754]">
-              <div>
-                <h1 className='text-[20px] font-bold'>Ecommerce-Project</h1>
+      <header className="fixed inset-x-0 top-0 z-50 flex h-16 justify-center bg-white px-3 shadow-sm sm:px-[30px]">
+        <div className="grid w-full max-w-[1100px] grid-cols-[auto_1fr_auto] items-center gap-2">
+          <div className="min-w-0 sm:w-[200px]">
+            <Link to="/" className="inline-block max-w-full cursor-pointer rounded-[2px] border border-transparent px-1.5 py-1.5 no-underline hover:border-[#198754] sm:px-[9.5px]">
+              <div className="truncate text-base font-bold sm:text-[20px]">
+                <span className="sm:hidden">Shop</span>
+                <span className="hidden sm:inline">Ecommerce-Project</span>
               </div>
             </Link>
           </div>
 
-          <div className="mr-[5px] flex flex-1 shrink-0 justify-center text-center text-xl font-medium min-[576px]:mr-[60px] min-[1001px]:mr-0 min-[1001px]:text-[22px]">
+          <div className="min-w-0 text-center text-base font-medium sm:text-xl min-[1001px]:text-[22px]">
             Checkout (<Link className="cursor-pointer text-[#198754] no-underline"
               to="/">{totalQuantity} {totalQuantity === 1 ? 'item' : 'items'}</Link>)
           </div>
 
-          <div className="flex w-auto items-center justify-end text-right min-[1001px]:w-[200px]">
-            <img className="h-8" src="images/icons/checkout-lock-icon.png" />
+          <div className="flex items-center justify-end text-right sm:w-[200px]">
+            <img className="h-7 sm:h-8" src="/images/icons/checkout-lock-icon.png" alt="Secure checkout" />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto mt-[140px] mb-[100px] max-w-[1100px] px-[30px]">
+      <main className="mx-auto mb-16 mt-24 max-w-[1100px] px-3 sm:mb-[100px] sm:mt-[120px] sm:px-[30px]">
         <h1 className="mb-[18px] text-[22px] font-bold">Review your order</h1>
 
         {error && <p className="mb-4 text-red-700" role="alert">{error}</p>}

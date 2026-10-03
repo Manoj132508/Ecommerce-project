@@ -79,14 +79,14 @@ export default function AdminDashboard() {
       <title>Admin Dashboard</title>
       <Header />
 
-      <main className="container mx-auto px-4 pb-12 pt-[90px]">
-        <h1 className="mb-8 text-3xl font-bold text-gray-800">Admin Dashboard</h1>
+      <main className="container mx-auto px-3 pb-12 pt-[132px] sm:px-4 xl:pt-[90px]">
+        <h1 className="mb-6 text-2xl font-bold text-gray-800 sm:mb-8 sm:text-3xl">Admin Dashboard</h1>
 
-        <div className="mb-6 flex border-b">
-          <button type="button" onClick={() => setActiveTab('products')} className={`px-4 py-2 font-semibold ${activeTab === 'products' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-blue-600'}`}>
+        <div className="mb-6 flex overflow-x-auto border-b">
+          <button type="button" onClick={() => setActiveTab('products')} className={`shrink-0 px-3 py-2 font-semibold sm:px-4 ${activeTab === 'products' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-blue-600'}`}>
             Manage Products
           </button>
-          <button type="button" onClick={() => setActiveTab('orders')} className={`px-4 py-2 font-semibold ${activeTab === 'orders' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-blue-600'}`}>
+          <button type="button" onClick={() => setActiveTab('orders')} className={`shrink-0 px-3 py-2 font-semibold sm:px-4 ${activeTab === 'orders' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-blue-600'}`}>
             Manage Orders
           </button>
         </div>

@@ -53,7 +53,7 @@ export function TrackingPage() {
     return (
       <>
         <Header />
-        <main className="mx-auto mt-[90px] max-w-[850px] px-[10px] min-[576px]:px-[30px]">
+        <main className="mx-auto mt-[132px] max-w-[850px] px-3 sm:px-[30px] xl:mt-[90px]">
           Loading package...
         </main>
       </>
@@ -65,7 +65,7 @@ export function TrackingPage() {
       <>
         <title>Tracking</title>
         <Header />
-        <main className="mx-auto mt-[90px] max-w-[850px] px-[10px] min-[576px]:px-[30px]">
+        <main className="mx-auto mt-[132px] max-w-[850px] px-3 sm:px-[30px] xl:mt-[90px]">
           <Link className={`${actionLink} mb-[30px] inline-block`} to="/orders">
             View all orders
           </Link>
@@ -88,13 +88,13 @@ export function TrackingPage() {
       <title>Tracking</title>
       <Header />
 
-      <main className="mx-auto mt-[90px] max-w-[850px] px-[10px] min-[576px]:px-[30px]">
+      <main className="mx-auto mt-[132px] max-w-[850px] px-3 sm:px-[30px] xl:mt-[90px]">
         <div className="max-w-[500px]">
           <Link className={`${actionLink} mb-[30px] inline-block`} to="/orders">
             View all orders
           </Link>
 
-          <div className="mb-[10px] text-[25px] font-bold">
+          <div className="mb-[10px] text-xl font-bold sm:text-[25px]">
             Arriving on {dayjs(deliveryTime).format('dddd, MMMM D')}
           </div>
 

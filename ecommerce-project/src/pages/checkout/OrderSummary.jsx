@@ -39,9 +39,9 @@ export function OrderSummary() {
 
         if (!cartItem.product) {
           return (
-            <article key={cartItem.productId} className="mb-3 rounded border border-red-300 bg-red-50 p-[18px]">
-              <div className="grid grid-cols-[80px_1fr] items-center gap-5">
-                <div className="flex h-20 w-20 items-center justify-center rounded bg-white text-3xl font-bold text-red-500">
+            <article key={cartItem.productId} className="mb-3 rounded border border-red-300 bg-red-50 p-4 sm:p-[18px]">
+              <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-3 sm:grid-cols-[80px_1fr] sm:gap-5">
+                <div className="flex h-16 w-16 items-center justify-center rounded bg-white text-3xl font-bold text-red-500 sm:h-20 sm:w-20">
                   !
                 </div>
                 <div>
@@ -68,12 +68,12 @@ export function OrderSummary() {
         }
 
         return (
-          <article key={cartItem.productId} className="mb-3 rounded border border-[#dedede] p-[18px]">
-            <div className="mt-[5px] mb-[22px] text-[19px] font-bold text-[#198754]">
+          <article key={cartItem.productId} className="mb-3 rounded border border-[#dedede] p-4 sm:p-[18px]">
+            <div className="mb-[22px] mt-[5px] text-base font-bold text-[#198754] sm:text-[19px]">
               Delivery date: {dayjs(selectedDeliveryOption.estimatedDeliveryTimeMs).format('dddd, MMMM D')}
             </div>
 
-            <div className="grid grid-cols-[100px_1fr] gap-x-[25px] gap-y-[30px] min-[1001px]:grid-cols-[100px_1fr_1fr] min-[1001px]:gap-y-0">
+            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-6 sm:grid-cols-[100px_1fr] sm:gap-x-[25px] sm:gap-y-[30px] min-[1001px]:grid-cols-[100px_1fr_1fr] min-[1001px]:gap-y-0">
               <img className="mx-auto max-h-[120px] max-w-full"
                 src={cartItem.product.image} />
 

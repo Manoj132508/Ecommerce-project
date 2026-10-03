@@ -10,8 +10,8 @@ export function ProductUnavailablePage() {
       <title>Product Unavailable</title>
       <Header />
 
-      <main className="mx-auto flex min-h-[70vh] max-w-xl items-center px-5 pt-[60px] text-center">
-        <div className="w-full rounded-lg bg-white p-8 shadow-md">
+      <main className="mx-auto flex min-h-[70vh] max-w-xl items-center px-3 pt-[108px] text-center sm:px-5 xl:pt-[60px]">
+        <div className="w-full rounded-lg bg-white p-5 shadow-md sm:p-8">
           <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-3xl text-red-600">
             !
           </div>

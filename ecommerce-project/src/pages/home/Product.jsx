@@ -39,8 +39,8 @@ export function Product({ product }) {
   };
 
   return (
-    <article className="flex flex-col border-r border-b border-[#f0f0f0] px-[25px] pt-10 pb-[25px]">
-      <div className="mb-5 flex h-[180px] items-center justify-center">
+    <article className="flex min-w-0 flex-col border-r border-b border-[#f0f0f0] px-3 pb-5 pt-6 sm:px-5 sm:pb-[25px] sm:pt-8 xl:px-[25px] xl:pt-10">
+      <div className="mb-4 flex h-[140px] items-center justify-center sm:h-[170px] xl:h-[180px]">
         <img className="max-h-full max-w-full rounded-[5px]"
           src={product.image} />
       </div>
@@ -50,7 +50,7 @@ export function Product({ product }) {
       </div>
 
       <div className="mb-[10px] flex items-center">
-        <img className="mr-1.5 w-[100px]"
+        <img className="mr-1.5 w-[90px] max-w-[75%] sm:w-[100px]"
           src={`images/ratings/rating-${product.rating.stars * 10}.png`} />
         <div className="mt-[3px] cursor-auto text-[#198754]">
           {product.rating.count}
@@ -79,7 +79,7 @@ export function Product({ product }) {
       <div className="flex-1"></div>
 
       <div className={`mb-2 flex items-center text-base text-[#198754] transition-opacity ${showAddedMessage ? 'opacity-100' : 'opacity-0'}`}>
-        <img className="mr-1.5 h-[19px]" src="images/icons/checkmark.png" />
+        <img className="mr-1.5 h-[19px]" src="/images/icons/checkmark.png" alt="" />
         Added
       </div>
 

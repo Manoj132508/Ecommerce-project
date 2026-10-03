@@ -33,8 +33,8 @@ export function OrdersPage() {
 
       <Header />
 
-      <main className="mx-auto mt-[90px] mb-[100px] max-w-[850px] px-5">
-        <h1 className="mb-[25px] text-[26px] font-bold">Your Orders</h1>
+      <main className="mx-auto mb-[100px] mt-[132px] max-w-[850px] px-3 sm:px-5 xl:mt-[90px]">
+        <h1 className="mb-[25px] text-2xl font-bold sm:text-[26px]">Your Orders</h1>
 
         {(error || cartError) && (
           <p className="mb-5 text-red-700" role="alert">{error || cartError}</p>
@@ -64,7 +64,7 @@ export function OrdersPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 items-center gap-x-[35px] gap-y-0 rounded-b-[5px] border border-t-0 border-[#dedede] px-[25px] pt-10 pb-2 min-[451px]:grid-cols-[110px_1fr] min-[801px]:grid-cols-[110px_1fr_220px] min-[801px]:gap-y-[60px] min-[801px]:pb-10">
+                <div className="grid grid-cols-1 items-center gap-x-[35px] gap-y-0 rounded-b-[5px] border border-t-0 border-[#dedede] px-4 pb-2 pt-8 min-[451px]:grid-cols-[110px_1fr] min-[451px]:px-[25px] min-[451px]:pt-10 min-[801px]:grid-cols-[110px_1fr_220px] min-[801px]:gap-y-[60px] min-[801px]:pb-10">
                   {order.products.map((orderProduct) => {
                     const product = orderProduct.product;
 
@@ -93,7 +93,7 @@ export function OrdersPage() {
                           </div>
                           <button className={`${primaryButton} mb-[15px] flex h-9 w-full items-center justify-center min-[451px]:mb-[10px] min-[451px]:w-[140px] min-[801px]:mb-0`}
                             onClick={() => buyAgain(orderProduct.productId, product?.name)}>
-                            <img className="mr-[10px] w-5" src="images/icons/buy-again.png" />
+                            <img className="mr-[10px] w-5" src="/images/icons/buy-again.png" alt="" />
                             <span className="buy-again-message">Add to Cart</span>
                           </button>
                         </div>

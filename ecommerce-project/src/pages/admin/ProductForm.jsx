@@ -66,7 +66,7 @@ export function ProductForm({ editingProduct, saving, onCreate, onUpdate, onCanc
   };
 
   return (
-    <section className="mb-8 rounded-lg bg-white p-6 shadow-md">
+    <section className="mb-8 rounded-lg bg-white p-4 shadow-md sm:p-6">
       <h2 className="mb-4 text-xl font-bold">
         {editingProduct ? 'Edit Product' : 'Add New Product'}
       </h2>
@@ -81,7 +81,7 @@ export function ProductForm({ editingProduct, saving, onCreate, onUpdate, onCanc
           <input type="text" name="description" value={formData.description} onChange={handleInputChange} placeholder="Description" className="rounded border px-3 py-2" required />
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 min-[400px]:flex-row">
           <button type="submit" disabled={saving} className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400">
             {saving
               ? (editingProduct ? 'Updating...' : 'Adding...')

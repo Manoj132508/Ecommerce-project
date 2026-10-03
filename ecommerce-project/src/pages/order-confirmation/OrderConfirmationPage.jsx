@@ -72,8 +72,8 @@ export function OrderConfirmationPage() {
       <title>Confirm Your Order</title>
       <Header />
 
-      <main className="mx-auto max-w-[1050px] px-5 pb-16 pt-[90px]">
-        <h1 className="mb-2 text-3xl font-bold text-gray-800">Confirm your order</h1>
+      <main className="mx-auto max-w-[1050px] px-3 pb-16 pt-[132px] sm:px-5 xl:pt-[90px]">
+        <h1 className="mb-2 text-2xl font-bold text-gray-800 sm:text-3xl">Confirm your order</h1>
         <p className="mb-7 text-gray-600">Enter your contact and delivery details before placing the order.</p>
 
         {error && (
@@ -89,7 +89,7 @@ export function OrderConfirmationPage() {
         )}
 
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_340px]">
-          <form onSubmit={handleSubmit} className="rounded-lg bg-white p-6 shadow-md">
+          <form onSubmit={handleSubmit} className="rounded-lg bg-white p-4 shadow-md sm:p-6">
             <h2 className="mb-5 text-xl font-bold">Customer details</h2>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -133,7 +133,7 @@ export function OrderConfirmationPage() {
             </div>
           </form>
 
-          <aside className="rounded-lg bg-white p-6 shadow-md">
+          <aside className="rounded-lg bg-white p-4 shadow-md sm:p-6">
             <h2 className="mb-4 text-xl font-bold">Order summary</h2>
             {checkoutLoading && !paymentSummary ? (
               <p>Loading order...</p>

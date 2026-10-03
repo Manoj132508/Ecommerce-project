@@ -35,8 +35,8 @@ export function LoginPage() {
   return (
     <>
       <Header />
-      <main className="container mx-auto px-4 pt-[90px] pb-16">
-        <div className="max-w-md mx-auto bg-white rounded-lg shadow-md p-8">
+      <main className="container mx-auto px-3 pb-16 pt-[132px] sm:px-4 xl:pt-[90px]">
+        <div className="mx-auto max-w-md rounded-lg bg-white p-5 shadow-md sm:p-8">
           <h1 className="text-2xl font-bold mb-6 text-center text-gray-800">
            Login
           </h1>

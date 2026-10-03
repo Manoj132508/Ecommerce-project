@@ -16,7 +16,7 @@ export function HomePage() {
 
       <Header />
 
-      <main className="mt-[60px]">
+      <main className="mt-[108px] xl:mt-[60px]">
         {error && (
           <p className="p-8 text-center text-red-700" role="alert">{error}</p>
         )}
