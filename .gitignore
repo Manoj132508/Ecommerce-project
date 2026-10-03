@@ -1,0 +1,17 @@
+# Dependencies and generated builds
+**/node_modules/
+**/dist/
+**/.npm-cache/
+
+# Environment files and local secrets
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Logs and editor files
+**/*.log
+.vscode/
+.idea/
+
+# Local recovery material is not part of the deployable application
+_recovery_backup_pre_restore_*/
