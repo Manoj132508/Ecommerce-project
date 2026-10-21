@@ -95,6 +95,13 @@ docker compose start
 
 ## Tests
 
-Run `npm test`. The authentication tests use real HTTP requests and model
-password hashing with in-memory database stubs, so they do not require MongoDB
-or create accounts in your configured database.
+Run `npm test` (Vitest + Supertest). Each test file starts its own throwaway
+in-memory MongoDB via `mongodb-memory-server`, so tests never read `.env` or
+touch your configured database; `test/setup.js` refuses to run if Mongoose is
+connected anywhere else. The first run downloads a MongoDB binary.
+
+The suites are the regression baseline for the PostgreSQL migration
+(`MIGRATION_PLAN.md`): they pin current status codes, response shapes, sort
+orders and totals for all 16 API endpoints. `test/cart.shared-cart.current-flaw.test.js`
+documents the shared-cart security flaw as current behaviour only; the approved
+user-specific cart contract is listed there as `todo` tests.

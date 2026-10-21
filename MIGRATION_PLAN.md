@@ -1,7 +1,7 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Planning — no application code changed by this document.**
-Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree.
+Status: **Phase 0 complete. Phase 1 complete except owner-gated items (1.4, 1.7). D1–D4 approved 2026-10-21.**
+Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
 
 Target stack:
 
@@ -31,7 +31,7 @@ tree contains **a large uncommitted migration already in progress**:
 Verified on 2026-10-21: frontend `tsc --noEmit` ✅, `eslint .` ✅, `vite build` ✅.
 Postgres container `ecommerce-postgres-postgres-1` is running and healthy on `127.0.0.1:5432`.
 
-**None of this is in git. A disk failure or a careless `git checkout .` loses it.** Backing it up is step 0.
+~~None of this is in git.~~ **Resolved in Phase 0:** committed as `74522fa` on `backup/wip-ts-postgres-2026-10-21` and pushed to `origin`.
 
 Untracked, intentionally ignored: `.env`, `.env.postgres`, `_recovery_backup_pre_restore_20260914_1645/` (117 KB), `.codex-run/*.log`.
 
@@ -125,8 +125,11 @@ Browse/search products (client-side filter via Redux `searchTerm`), product deta
 -- Extensions: none required (gen_random_uuid() is built in since PG 13)
 
 CREATE TABLE users (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  legacy_mongo_id char(24) UNIQUE,                 -- ObjectId hex, for ETL + token transition
+  -- D2: existing MongoDB ObjectId hex strings are kept verbatim, so every
+  -- issued JWT ({ id: "<24 hex>" }) and every orders.userId still resolves.
+  -- New users get an app-generated 24-hex id (crypto.randomBytes(12)), so the
+  -- strict /^[a-f\d]{24}$/i check in `protect` stays unchanged.
+  id              text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{24}$'),
   name            text NOT NULL CHECK (btrim(name) <> ''),
   email           text NOT NULL CHECK (email = lower(btrim(email))),
   password_hash   text NOT NULL,                   -- bcrypt, cost 12 (copied verbatim)
@@ -165,7 +168,7 @@ CREATE TABLE delivery_options (
 
 CREATE TABLE cart_items (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- see decision D1
+  user_id            text NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- D1: carts are owned
   product_id         uuid NOT NULL,   -- no FK (decision D3): deleted products stay in the cart as "unavailable"
   quantity           integer NOT NULL CHECK (quantity >= 1),
   delivery_option_id text NOT NULL REFERENCES delivery_options(id),
@@ -176,7 +179,7 @@ CREATE TABLE cart_items (
 
 CREATE TABLE orders (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id             uuid REFERENCES users(id) ON DELETE SET NULL,  -- nullable: 6 legacy orders have none
+  user_id             text REFERENCES users(id) ON DELETE SET NULL,  -- nullable: 6 legacy orders have none
   customer_full_name  text,      -- customer_* nullable: 6 legacy orders have no customer
   customer_email      text,
   customer_phone      text,
@@ -198,13 +201,25 @@ CREATE TABLE order_items (
                                                      -- and /tracking looks items up by productId
   quantity               integer NOT NULL CHECK (quantity >= 1),
   estimated_delivery_at  timestamptz NOT NULL,       -- serialised as estimatedDeliveryTimeMs
-  snapshot_name          text,                       -- snapshot_* NULL ⇒ legacy order, LEFT JOIN products
+  -- D4: legacy lines (migrated without snapshots) are flagged; every new line
+  -- must carry an immutable name/price snapshot. Never backfilled.
+  is_legacy              boolean NOT NULL DEFAULT false,
+  snapshot_name          text,
   snapshot_image         text,
-  snapshot_price_cents   integer,
+  snapshot_price_cents   integer CHECK (snapshot_price_cents >= 0),
   snapshot_description   text,
   snapshot_category      text,
-  PRIMARY KEY (order_id, position)
+  PRIMARY KEY (order_id, position),
+  CHECK (is_legacy OR (snapshot_name IS NOT NULL AND snapshot_price_cents IS NOT NULL))
 );
+
+-- D4: order history is append-only; snapshots cannot be edited after insert.
+CREATE FUNCTION reject_order_item_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'order_items are immutable';
+END $$;
+CREATE TRIGGER order_items_immutable BEFORE UPDATE ON order_items
+  FOR EACH ROW EXECUTE FUNCTION reject_order_item_update();
 
 CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
 ```
@@ -214,7 +229,7 @@ Field-level conversions:
 | Mongo | Postgres | API serialisation |
 | --- | --- | --- |
 | `_id` (String UUID) | `uuid` | `id` (string) |
-| User `_id` (ObjectId) | `uuid` + `legacy_mongo_id` | `_id` (keep the key name; value becomes the uuid) |
+| User `_id` (ObjectId) | `text` holding the same 24-hex string (D2) | `_id` (unchanged key and value) |
 | `rating: {stars,count}` | `rating_stars`, `rating_count` | rebuild nested `rating` object; cast `numeric` → `Number` |
 | `[String]` | `text[]` | array |
 | embedded `customer` | `customer_*` columns | rebuild object; omit when all null |
@@ -255,26 +270,30 @@ Field-level conversions:
 
 | # | Risk | Severity | Mitigation |
 | --- | --- | --- | --- |
-| R1 | Uncommitted WIP lost | **Critical** | Phase 0 backup branch, pushed to origin |
+| R1 | Uncommitted WIP lost | ~~Critical~~ **Resolved** | Phase 0: `74522fa` on `backup/wip-ts-postgres-2026-10-21`, pushed |
 | R2 | **Cart is global**: any visitor sees/edits the same cart; placing an order empties it for everyone | **High (existing bug)** | Decision D1; fix as an explicit, separately-tested behaviour change |
-| R3 | User IDs change ObjectId → uuid: existing 30-day JWTs fail the 24-hex check; `orders.userId` strings must be remapped | High | ETL maps via `legacy_mongo_id`; decision D2 on token handling |
+| R3 | User IDs change type → existing 30-day JWTs and `orders.userId` break | ~~High~~ **Mitigated by D2** | IDs kept verbatim as `text`; `protect` keeps HS256-only verification, expiry and the 24-hex check unchanged |
 | R4 | Legacy orders lack `userId`, `customer`, snapshots; 5/8 referenced products deleted | Medium | Nullable columns, no FK on `order_items.product_id`, LEFT JOIN fallback — reproduces current "Product unavailable" output |
-| R5 | Payment summary total (`before + round(before*0.1)`) and order total (`round(before*1.1)`) can differ by 1¢ with float rounding | Medium (existing) | Pin current behaviour in characterisation tests; unify in one shared function in a separate commit |
+| R5 | Payment summary total (`before + round(before*0.1)`) and order total (`round(before*1.1)`) could differ by 1¢ | ~~Medium~~ **Low** | Exhaustively checked for every pre-tax total 1¢–$1,000: no difference. Pinned by `orders.test.js`. Still unify into one function in Phase 4.4 |
 | R6 | Production DB location unknown; local profile may not match prod | High | Identify host, run the same read-only profile on prod, `mongodump` prod before cutover |
 | R7 | `products.stock` absent on all docs → migrates as 0. Harmless today (stock isn't enforced) but becomes "everything out of stock" if enforcement is added | Low | Record; decide stock values before adding enforcement |
 | R8 | Next.js routing differences: `<base href="/">` + relative `images/ratings/...` in `Product.tsx` breaks on nested routes; `ProductUnavailablePage` relies on router `location.state`; `*` route renders Home; `useSearchParams` needs a Suspense boundary | Medium | Covered in Phase 5 checklist |
 | R9 | localStorage token is invisible to Server Components | Medium | Keep all authenticated fetching client-side in Phase 5; cookie auth is an optional later phase |
 | R10 | Deployment config (Vercel root dir, backend build/start commands, CORS origin) breaks when folders move or build steps change | Medium | Don't move deployed folders until cutover; new Next app gets its own Vercel project first |
-| R11 | Auth test suite deleted in WIP → no regression net for auth | Medium | Restore before any backend refactor (Phase 1) |
+| R11 | Auth test suite deleted in WIP → no regression net for auth | ~~Medium~~ **Resolved** | All 24 original cases ported to Vitest in Phase 1 |
 | R12 | `docker compose down -v` deletes Postgres data | Medium | Never use `-v`; `pg_dump` before each ETL rerun |
 | R13 | Dual-write / split-brain if some domains read Mongo and others Postgres while sharing IDs | Medium | Migrate domains in dependency order; cut over all writes for a domain at once; no dual-write |
+| R14 | Cart quantity validation gaps (found in Phase 1): POST accepts fractional quantities (`1.5`); re-adding can exceed 10; PUT has no upper bound | Medium | Pinned in `cart.test.js`. `integer` + `CHECK (quantity BETWEEN 1 AND …)` would reject current data/requests: decide limits explicitly in Phase 4.4 and verify no stored fractional quantities before ETL |
+| R15 | Non-JSON errors (found in Phase 1): unknown routes (404), malformed JSON (400) and CORS rejections (500) return Express's HTML error page, with stack traces unless `NODE_ENV=production`; cart/order/payment 500s leak `error.message` | Medium | Pinned in `app.test.js`/`cart.test.js`. Confirm production sets `NODE_ENV=production`; add a JSON error handler in Phase 2.5 as a deliberate contract change |
+| R16 | Product `PUT` replaces `keywords` with `[category]`, discarding seeded keywords used by client-side search | Low | Pinned in `products.test.js`; keep for parity, revisit separately |
+| R17 | Mongoose deprecation: `findByIdAndUpdate(..., { new: true })` (productController) warns under Mongoose 9 | Low | Code is replaced in Phase 4.2; no change now |
 
-### Decisions needed from the owner
+### Approved decisions (2026-10-21)
 
-- **D1 — Cart ownership.** Recommended: per-user cart (`user_id NOT NULL`, cart routes behind `protect`). The frontend already gates cart queries on login in `Header`/`OrderConfirmationPage`; `CheckoutPage` does not and must be gated. The 4 existing global cart rows are discarded (or assigned to the single local user). Alternative: keep the global cart in Postgres (`user_id` nullable) for strict parity and fix later.
-- **D2 — Existing tokens.** Recommended: during a transition window, `protect` accepts either a uuid or a 24-hex id (lookup via `legacy_mongo_id`); remove after 30 days. Alternative: force everyone to log in again.
-- **D3 — Deleting a product that is in carts.** Today the cart row survives and checkout shows "no longer available". `ON DELETE CASCADE` silently removes it instead. Recommended for parity: no FK on `cart_items.product_id`, keep the LEFT JOIN behaviour (this is what the schema above uses). Alternative: `REFERENCES products(id) ON DELETE CASCADE`.
-- **D4 — Snapshot backfill for legacy orders.** Recommended: don't fabricate snapshots; keep the LEFT JOIN fallback.
+- **D1 — User-specific carts.** Every cart route requires a valid bearer token, and each user can read and change only their own cart lines (`UNIQUE (user_id, product_id)`). Checkout orders and clears **only the authenticated user's cart**, in the same transaction as the order insert. Another user's line returns 404, not 403. The existing behaviour is **not** changed silently: the shared-cart flaw is pinned as current behaviour in `test/cart.shared-cart.current-flaw.test.js`, and the target contract is listed there as 9 `it.todo` tests. Implemented as its own commit in Phase 4.4, which deletes the flaw tests and turns the todos into real tests. Frontend: gate cart queries in `CheckoutPage`, `Product`, `OneProductPage` and the `OrdersPage` "buy again" button. The 4 existing global cart rows aren't migrated (cart contents are transient; the Phase 0 dump keeps them).
+- **D2 — Keep MongoDB ObjectId user IDs as PostgreSQL `TEXT`.** `users.id`, `orders.user_id` and `cart_items.user_id` are `text` holding the existing 24-hex strings verbatim. Existing valid JWTs keep working because the `id` claim still matches a row. Authentication isn't weakened: `protect` still verifies HS256 only, with the same secret, expiry/`nbf` checks and strict 24-hex format check. New users get an app-generated 24-hex id. Pinned by the 24 tests in `auth.test.js`.
+- **D3 — Keep cart lines for deleted products.** No FK from `cart_items.product_id` to `products`. Lines stay visible as `product: null, unavailable: true`, are excluded from totals and listed in `unavailableProductIds`, and checkout returns 409 until the shopper deletes them. Nothing deletes them automatically. Pinned in `cart.test.js` and `orders.test.js`.
+- **D4 — Preserve historical orders; no invented snapshots.** Legacy lines migrate with `is_legacy = true`, null snapshot columns and no FK on `product_id`, and keep the current LEFT JOIN lookup (current product or `null`). New lines require a `snapshot_name` and `snapshot_price_cents` (CHECK constraint) plus `quantity`, and `order_items` rejects UPDATE (trigger). Pinned in `orders.test.js`, including snapshot immutability after product edit and delete.
 
 ---
 
@@ -304,24 +323,37 @@ Each step is one reviewable commit (or a small PR), leaves `main` deployable, an
 
 ### Phase 0 — Backup and freeze (no code changes)
 
-- [ ] 0.1 Create backup branch with the WIP and push (commands in §7)
-- [ ] 0.2 Tag the last deployed commit: `pre-pg-migration` → `4e622f5`
-- [ ] 0.3 `mongodump` local DB (and production DB once identified) — §7
-- [ ] 0.4 JSON export of every collection (second, tool-independent copy) — §7
-- [ ] 0.5 Copy `.env` and `.env.postgres` to a password manager / secure location (they're git-ignored)
-- [ ] 0.6 Identify the production backend host, its build/start commands and its `MONGODB_URI` host; record here
+- [x] 0.1 Backup branch `backup/wip-ts-postgres-2026-10-21` @ `74522fa`, pushed (staged files checked: no secrets, dumps, `node_modules` or build output)
+- [x] 0.2 Annotated tag `pre-pg-migration` → `4e622f5` (verified as `origin/main` tip and Mongo/Vite/JSX baseline), pushed
+- [x] 0.3 `mongodump` of the **local** DB — single gzip archive, restore-verified (§7). Production DB: still to do once identified
+- [ ] 0.4 ~~JSON export~~ Optional: superseded by the restore-verified archive with matching `dbHash`
+- [ ] 0.5 Owner: copy `.env` and `.env.postgres` to a password manager / secure location (they're git-ignored)
+- [ ] 0.6 Owner: identify the production backend host, its build/start commands and its `MONGODB_URI` host; record here
 
 **Acceptance:** backup branch visible on `origin`; tag exists; dump directories contain all 5 non-empty collections with doc counts matching §1.4; restoring the dump into a throwaway Mongo container reproduces the counts.
 
 ### Phase 1 — Commit the WIP and add a safety net (still Mongo)
 
-- [ ] 1.1 On a working branch `migration/postgres`, decide whether `test/auth.test.js` deletion was intentional; recommended: `git restore ecommerce-backend/test/auth.test.js`
-- [ ] 1.2 Commit the frontend TS/TanStack/Redux conversion as its own commit (already green: typecheck, lint, build)
-- [ ] 1.3 Commit the backend Postgres scaffolding (compose, config, scripts) as its own commit
-- [ ] 1.4 Run `migrate:product-descriptions` and `migrate:product-categories` against Mongo (idempotent backfills) so data is complete before ETL
-- [ ] 1.5 Add **characterisation tests** (`node:test` + real HTTP, like the existing auth test) for every endpoint in §2, against a seeded test database. These pin current status codes, shapes, sort orders and rounding, and become the acceptance suite for every later phase
-- [ ] 1.6 Update `ecommerce-project/README.md` (still describes the deleted Context files)
-- [ ] 1.7 Manual smoke test of all "working features" in §2; deploy to production; confirm parity
+- [x] 1.1 Working branch `migration/postgres` created from `backup/wip-ts-postgres-2026-10-21` (backup branch unchanged). All 24 cases of the deleted `test/auth.test.js` recreated in Vitest
+- [x] 1.2 / 1.3 Frontend conversion and backend Postgres scaffolding: committed together in the Phase 0 backup commit `74522fa` instead of separately
+- [x] 1.4 Backfills: **not needed locally**. Read-only check on 2026-10-21 found 0/35 products missing `description`, `howItWorks`, `highlights`, `careInstructions` or `category`. Re-check production once identified; don't run against production without approval
+- [x] 1.5 Characterisation tests: Vitest 5 + Supertest 7 against an in-memory MongoDB (`mongodb-memory-server`), one private instance per file. `app.js` split from `server.js` so tests don't open a port or read `.env`. Covers all 16 endpoints, shapes, status codes, error cases, sort orders, totals, D1–D4 behaviour and CORS. Result: **7 files, 101 passed, 9 todo, 0 failed** (stable over repeated runs; dev DB `dbHash` unchanged before and after)
+- [ ] 1.6 Update `ecommerce-project/README.md` (still describes the deleted Context files). Not done: outside the approved Phase 1 task list
+- [ ] 1.7 Owner-gated: manual smoke test of all "working features" in §2, then deploy to production and confirm parity. Not done: deployment needs explicit approval
+
+Test files (`ecommerce-backend/test/`):
+
+| File | Tests | Covers |
+| --- | --- | --- |
+| `auth.test.js` | 24 | A1–A3, `protect` middleware, User model hashing (ported original suite) |
+| `products.test.js` | 17 | P1–P4, product-detail derivation, `stock` default, cents rounding |
+| `deliveryOptions.test.js` | 4 | D1 endpoint and `expand=estimatedDeliveryTime` |
+| `cart.test.js` | 22 | C1–C5 mechanics, validation gaps, totals, D3 unavailable lines |
+| `cart.shared-cart.current-flaw.test.js` | 5 + 9 todo | Current shared-cart flaw (not the target contract) + D1 target contract as todos |
+| `orders.test.js` | 19 | O1–O3, checkout, D3 blocking, D4 snapshots/legacy orders, ownership |
+| `app.test.js` | 10 | Health routes, CORS allowlist, Express default HTML errors |
+
+**Acceptance (met locally):** `npm test` green in backend; frontend typecheck/lint/build green; `server.js` boots unchanged against the dev DB and serves `/api/products`.
 
 **Acceptance:** `npm test` green in backend; frontend typecheck/lint/build green; production smoke test passes on the TS frontend.
 **Rollback:** redeploy `pre-pg-migration` tag.
@@ -344,7 +376,7 @@ Each step is one reviewable commit (or a small PR), leaves `main` deployable, an
 - [ ] 3.2 `db/migrations/001_init.sql` (schema in §3.1) + tiny runner using `schema_migrations`; `npm run db:migrate`
 - [ ] 3.3 Repository interfaces per domain (`ProductRepo`, `DeliveryOptionRepo`, `UserRepo`, `CartRepo`, `OrderRepo`) with a Mongo implementation (wrapping current Mongoose code) and a Postgres implementation (parameterised SQL only — no string-built SQL, ever)
 - [ ] 3.4 Per-domain switch `DATA_SOURCE_<DOMAIN>=mongo|postgres` (default `mongo`)
-- [ ] 3.5 `scripts/etl/mongoToPostgres.ts`: reads Mongo read-only, upserts into Postgres in one transaction per collection (`ON CONFLICT (id) DO UPDATE`), maps user ObjectIds via `legacy_mongo_id`, converts ms → timestamptz, flattens rating/customer, explodes order products with `position`; idempotent and re-runnable
+- [ ] 3.5 `scripts/etl/mongoToPostgres.ts`: reads Mongo read-only, upserts into Postgres in one transaction per collection (`ON CONFLICT (id) DO UPDATE`), copies user ObjectId hex strings verbatim (D2), sets `is_legacy = true` on order lines without a snapshot (D4), converts ms → timestamptz, flattens rating/customer, explodes order products with `position`; idempotent and re-runnable
 - [ ] 3.6 `scripts/etl/verify.ts`: row counts per table = doc counts; per-row checksum of key fields; every `orders.user_id` resolves; every product price/rating equal; prints a diff and exits non-zero on mismatch
 - [ ] 3.7 Run the characterisation suite against each Postgres repo implementation
 
@@ -434,14 +466,29 @@ git push origin pre-pg-migration
 git switch -c migration/postgres
 ```
 
+**Completed 2026-10-21 (local DB).** The backup is a **single gzip archive file**, not a dump directory:
+
+| Item | Value |
+| --- | --- |
+| File | `C:\Users\manoj\Desktop\ecommerce-backups\mongo-ecommerce_store-2026-10-21.archive.gz` (9,450 bytes) |
+| SHA-256 | `77bf72fd6ecd17015dcc689980cb8f8bb47eded2b7b6b42429fb36c17301ce26` (also in `…archive.gz.sha256`) |
+| Tooling | `mongodump` 100.19.1 in `mongo:8`, source MongoDB 8.3.8 |
+| Verified | `gzip -t` OK; restored into an isolated throwaway container: 51/51 documents, index counts and per-collection `dbHash` identical to live |
+| Counts | products 35, orders 8, cartItems 4, deliveryOptions 3, users 1, `delivery Options` 0 |
+
 ```bash
-# 0.3 — mongodump without installing tools (Docker Desktop; host.docker.internal reaches the Windows host)
-mkdir -p ../ecommerce-backups/mongo-2026-10-21
-docker run --rm -v "$(cd ../ecommerce-backups && pwd -W)/mongo-2026-10-21:/dump" mongo:8 \
-  mongodump --uri "mongodb://host.docker.internal:27017/ecommerce_store" --out /dump
-# Restore test into a throwaway container (never into the real DB):
-#   docker run -d --name mongo-restore-test -p 27018:27017 mongo:8
-#   docker run --rm -v ".../mongo-2026-10-21:/dump" mongo:8 mongorestore --uri mongodb://host.docker.internal:27018 /dump
+# 0.3 — mongodump without installing tools. The URI is passed as an env var, never as an argument.
+# host.docker.internal reaches the Windows host (worked even though mongod binds 127.0.0.1).
+export MONGO_URI="mongodb://host.docker.internal:27017/ecommerce_store"
+docker run --rm -e MONGO_URI -v "$(cd ../ecommerce-backups && pwd -W):/backup" mongo:8 \
+  sh -c 'mongodump --uri "$MONGO_URI" --gzip --archive=/backup/mongo-ecommerce_store-YYYY-MM-DD.archive.gz'
+
+# Verify: restore into a throwaway container with no published ports (never into the real DB)
+docker run -d --name restore-verify mongo:8
+docker run --rm --network container:restore-verify -v "$(cd ../ecommerce-backups && pwd -W):/backup:ro" mongo:8 \
+  mongorestore --uri mongodb://127.0.0.1:27017 --gzip --archive=/backup/mongo-ecommerce_store-YYYY-MM-DD.archive.gz
+docker exec restore-verify mongosh --quiet ecommerce_store --eval 'db.runCommand({dbHash:1}).collections'
+docker rm -f restore-verify
 ```
 
 ```bash
@@ -471,4 +518,9 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-**Phase 0.1–0.4:** create and push the backup branch and tag (§7), then take the Mongo dump and verify its counts against §1.4. After that, answer decisions D1–D4 and identify the production backend/database host (0.6), which unblocks Phase 1.
+Phase 0 and Phase 1 are done locally on branch `migration/postgres` (not yet pushed). Before Phase 2:
+
+1. Owner review of the Phase 1 changes; approve pushing `migration/postgres` to `origin`.
+2. Owner: identify the production backend/database host (0.6), back it up the same way (§7), and re-check backfills there (1.4).
+3. Owner-gated 1.7: smoke test and deploy. Phase 1 changes no runtime behaviour, but `server.js` now imports `app.js`, so the deploy confirms the split.
+4. Then Phase 2 (backend TypeScript toolchain), with `npm test` as the gate for every step.
