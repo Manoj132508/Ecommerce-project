@@ -1,9 +1,27 @@
+import type { RequestHandler } from "express";
 import CartItem from "../models/CartItem.js";
 import DeliveryOption from "../models/DeliveryOption.js";
 import Product from "../models/Product.js";
+import type { ErrorResponse, PaymentSummary } from "../types/api.js";
+import { errorMessage } from "../utils/errors.js";
+
+type NoParams = Record<string, string>;
+type CartItemParams = { productId: string };
+
+interface AddCartItemBody {
+  // Deliberately unknown and passed through unchanged: see MIGRATION_PLAN.md
+  // R18. Narrowing it to a string here would silently change behaviour.
+  productId?: unknown;
+  quantity?: unknown;
+}
+
+interface UpdateCartItemBody {
+  quantity?: unknown;
+  deliveryOptionId?: unknown;
+}
 
 // GET /api/cart-items
-export const getCartItems = async (req, res) => {
+export const getCartItems: RequestHandler<NoParams> = async (req, res) => {
   try {
     const cartItems = await CartItem.find().sort({ createdAt: 1 });
 
@@ -16,65 +34,68 @@ export const getCartItems = async (req, res) => {
             ...cartItem.toJSON(),
             product,
             unavailable: !product
-            
           };
         })
       );
-       
+
       return res.json(cartWithProducts);
     }
 
-    res.json(cartItems);
+    return res.json(cartItems);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // POST /api/cart-items
-export const addCartItem = async (req, res) => {
+export const addCartItem: RequestHandler<NoParams, unknown, AddCartItemBody> = async (req, res) => {
   try {
     const { productId, quantity } = req.body;
 
     if (typeof quantity !== "number" || quantity < 1 || quantity > 10) {
       return res.status(400).json({
         message: "Quantity must be between 1 and 10"
-      });
+      } satisfies ErrorResponse);
     }
 
     const product = await Product.findById(productId);
 
     if (!product) {
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
     }
 
-    let cartItem = await CartItem.findOne({ productId });
+    // where().equals() and new + save() are the typed forms of the original
+    // findOne({ productId }) and create(); they accept the unvalidated value
+    // unchanged, so behaviour (including R18) is identical.
+    let cartItem = await CartItem.findOne().where("productId").equals(productId);
 
     if (cartItem) {
       cartItem.quantity += quantity;
       await cartItem.save();
     } else {
-      cartItem = await CartItem.create({
+      cartItem = new CartItem({
         productId,
         quantity,
         deliveryOptionId: "1"
       });
+      await cartItem.save();
     }
 
-    res.status(201).json(cartItem);
+    return res.status(201).json(cartItem);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // PUT /api/cart-items/:productId
-export const updateCartItem = async (req, res) => {
+export const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartItemBody> = async (req, res) => {
   try {
     const cartItem = await CartItem.findOne({
       productId: req.params.productId
     });
 
     if (!cartItem) {
-      return res.status(404).json({ message: "Cart item not found" });
+      return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
     }
 
     const { quantity, deliveryOptionId } = req.body;
@@ -83,7 +104,7 @@ export const updateCartItem = async (req, res) => {
       if (typeof quantity !== "number" || quantity < 1) {
         return res.status(400).json({
           message: "Quantity must be greater than 0"
-        });
+        } satisfies ErrorResponse);
       }
 
       cartItem.quantity = quantity;
@@ -93,45 +114,46 @@ export const updateCartItem = async (req, res) => {
       const deliveryOption = await DeliveryOption.findById(deliveryOptionId);
 
       if (!deliveryOption) {
-        return res.status(400).json({ message: "Invalid delivery option" });
+        return res.status(400).json({ message: "Invalid delivery option" } satisfies ErrorResponse);
       }
 
-      cartItem.deliveryOptionId = deliveryOptionId;
+      // The request value as sent (cast by Mongoose), exactly like the original assignment.
+      cartItem.set("deliveryOptionId", deliveryOptionId);
     }
 
     await cartItem.save();
-    res.json(cartItem);
+    return res.json(cartItem);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // DELETE /api/cart-items/:productId
-export const deleteCartItem = async (req, res) => {
+export const deleteCartItem: RequestHandler<CartItemParams> = async (req, res) => {
   try {
     const cartItem = await CartItem.findOne({
       productId: req.params.productId
     });
 
     if (!cartItem) {
-      return res.status(404).json({ message: "Cart item not found" });
+      return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
     }
 
     await cartItem.deleteOne();
-    res.status(204).send();
+    return res.status(204).send();
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // GET /api/payment-summary
-export const getPaymentSummary = async (req, res) => {
+export const getPaymentSummary: RequestHandler<NoParams> = async (req, res) => {
   try {
     const cartItems = await CartItem.find();
     let totalItems = 0;
     let productCostCents = 0;
     let shippingCostCents = 0;
-    const unavailableProductIds = [];
+    const unavailableProductIds: string[] = [];
 
     for (const cartItem of cartItems) {
       const product = await Product.findById(cartItem.productId);
@@ -157,7 +179,7 @@ export const getPaymentSummary = async (req, res) => {
     const totalCostBeforeTaxCents = productCostCents + shippingCostCents;
     const taxCents = Math.round(totalCostBeforeTaxCents * 0.1);
 
-    res.json({
+    const summary: PaymentSummary = {
       totalItems,
       productCostCents,
       shippingCostCents,
@@ -165,8 +187,10 @@ export const getPaymentSummary = async (req, res) => {
       taxCents,
       totalCostCents: totalCostBeforeTaxCents + taxCents,
       unavailableProductIds
-    });
+    };
+
+    return res.json(summary);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };

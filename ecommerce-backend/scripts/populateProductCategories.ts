@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import connectDB from "../config/db.js";
 import Product from "../models/Product.js";
+import { errorMessage } from "../utils/errors.js";
 import { getProductCategory } from "../utils/productInformation.js";
 
 dotenv.config();
@@ -34,7 +35,7 @@ async function populateProductCategories() {
 try {
   await populateProductCategories();
 } catch (error) {
-  console.error(`Product category migration failed: ${error.message}`);
+  console.error(`Product category migration failed: ${String(errorMessage(error))}`);
   process.exitCode = 1;
 } finally {
   await mongoose.disconnect();

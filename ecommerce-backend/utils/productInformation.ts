@@ -1,6 +1,20 @@
-const includesAny = (value, terms) => terms.some((term) => value.includes(term));
+// The subset of product fields these helpers read; Mongoose documents satisfy it.
+export interface ProductLabels {
+  name: string;
+  category?: unknown;
+  keywords?: readonly unknown[] | null;
+}
 
-const titleCase = (value) => value.replace(/\b\w/g, (letter) => letter.toUpperCase());
+export interface ProductInformation {
+  description: string;
+  howItWorks: string;
+  highlights: string[];
+  careInstructions: string;
+}
+
+const includesAny = (value: string, terms: readonly string[]) => terms.some((term) => value.includes(term));
+
+const titleCase = (value: string) => value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const guides = {
   default: {
@@ -50,7 +64,9 @@ const guides = {
   }
 };
 
-function selectGuide(searchableProduct) {
+type ProductGuide = Omit<ProductInformation, "highlights">;
+
+function selectGuide(searchableProduct: string): ProductGuide {
   if (includesAny(searchableProduct, ["appliance", "blender", "kettle", "espresso maker"])) return guides.appliance;
   if (includesAny(searchableProduct, ["cookware", "cooking pot", "cook set", "cooking set"])) return guides.cookware;
   if (includesAny(searchableProduct, ["plate", "bowl", "food container"])) return guides.dining;
@@ -62,7 +78,7 @@ function selectGuide(searchableProduct) {
   return guides.default;
 }
 
-export function getProductCategory(product) {
+export function getProductCategory(product: ProductLabels): string {
   const searchableProduct = [
     product.name,
     ...(product.keywords ?? [])
@@ -99,20 +115,21 @@ export function getProductCategory(product) {
   return "General";
 }
 
-export function getProductInformation(product) {
+export function getProductInformation(product: ProductLabels): ProductInformation {
   const labels = [product.category, ...(product.keywords ?? [])]
-    .filter((value) => typeof value === "string")
+    .filter((value): value is string => typeof value === "string")
     .map((value) => value.trim())
     .filter(Boolean);
   const highlights = [...new Set(labels)].slice(0, 4).map(titleCase);
-  const normalizedHighlights = highlights.length > 0
-    ? highlights
-    : ["Everyday Use", "Simple to Use", "Practical Design"];
+  const fallbackHighlights = ["Everyday Use", "Simple to Use", "Practical Design"];
+  const normalizedHighlights = highlights.length > 0 ? highlights : fallbackHighlights;
+  // normalizedHighlights is never empty; the fallback only satisfies the type checker.
+  const leadHighlight = normalizedHighlights[0] ?? "Everyday Use";
   const searchableProduct = [product.name, ...labels].join(" ").toLowerCase();
   const guide = selectGuide(searchableProduct);
 
   return {
-    description: `${product.name} is part of our ${normalizedHighlights[0].toLowerCase()} selection. ${guide.description}`,
+    description: `${product.name} is part of our ${leadHighlight.toLowerCase()} selection. ${guide.description}`,
     howItWorks: guide.howItWorks,
     highlights: normalizedHighlights,
     careInstructions: guide.careInstructions

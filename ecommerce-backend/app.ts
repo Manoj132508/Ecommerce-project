@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 
 import productRoutes from "./routes/productRoutes.js";
@@ -8,7 +8,7 @@ import authRoutes from "./routes/authRoutes.js";
 
 // Builds the Express app without connecting to a database or opening a port,
 // so tests can exercise it in-process. Call after environment variables load.
-export function createApp() {
+export function createApp(): Express {
   const app = express();
 
   // Permit the local Vite app and the deployed storefront to call this API.

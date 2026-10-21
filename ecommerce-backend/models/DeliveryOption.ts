@@ -12,7 +12,7 @@ const deliveryOptionSchema = new mongoose.Schema(
     versionKey: false,
     toJSON: {
       virtuals: true,
-      transform: (_document, option) => {
+      transform: (_document, option: Record<string, unknown>) => {
         option.id = option._id;
         delete option._id;
       }

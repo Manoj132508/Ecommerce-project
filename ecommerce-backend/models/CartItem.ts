@@ -12,8 +12,8 @@ const cartItemSchema = new mongoose.Schema(
     versionKey: false,
     toJSON: {
       virtuals: true,
-      transform: (_document, cartItem) => {
-        cartItem.id = cartItem._id.toString();
+      transform: (_document, cartItem: Record<string, unknown>) => {
+        cartItem.id = String(cartItem._id);
         delete cartItem._id;
       }
     }

@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import connectDB from "../config/db.js";
 import Product from "../models/Product.js";
-import { getProductInformation } from "../utils/productInformation.js";
+import { errorMessage } from "../utils/errors.js";
+import { getProductInformation, type ProductInformation } from "../utils/productInformation.js";
 
 dotenv.config();
 
@@ -15,7 +16,7 @@ async function populateProductDescriptions() {
 
   for (const product of products) {
     const generatedInformation = getProductInformation(product);
-    const updates = {};
+    const updates: Partial<ProductInformation> = {};
 
     if (!product.description?.trim()) {
       updates.description = generatedInformation.description;
@@ -50,7 +51,7 @@ async function populateProductDescriptions() {
 try {
   await populateProductDescriptions();
 } catch (error) {
-  console.error(`Product description migration failed: ${error.message}`);
+  console.error(`Product description migration failed: ${String(errorMessage(error))}`);
   process.exitCode = 1;
 } finally {
   await mongoose.disconnect();

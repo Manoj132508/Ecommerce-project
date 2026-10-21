@@ -1,23 +1,44 @@
-import User from "../models/User.js";
+import type { RequestHandler } from "express";
 import jwt from "jsonwebtoken";
+import { requireUser } from "../middleware/authMiddleware.js";
+import User, { type UserDocument } from "../models/User.js";
+import type { AuthResponse, ErrorResponse, UserProfile } from "../types/api.js";
+import { errorCode, errorMessage, errorName } from "../utils/errors.js";
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+type NoParams = Record<string, string>;
+
+// Request bodies are untrusted JSON: every field is validated before use.
+interface RegisterBody {
+  name?: unknown;
+  email?: unknown;
+  password?: unknown;
+}
+
+type LoginBody = Omit<RegisterBody, "name">;
+
+const generateToken = (id: string) => {
+  const secret = process.env.JWT_SECRET;
+  // Same failure as jsonwebtoken's own "secretOrPrivateKey must have a value".
+  if (!secret) {
+    throw new Error("JWT_SECRET is missing");
+  }
+
+  return jwt.sign({ id }, secret, {
     expiresIn: "30d"
   });
 };
 
-const userResponse = (user) => ({
-  _id: user._id,
+const userResponse = (user: UserDocument): AuthResponse => ({
+  _id: String(user._id),
   name: user.name,
   email: user.email,
   isAdmin: user.isAdmin,
-  token: generateToken(user._id)
+  token: generateToken(String(user._id))
 });
 
 // @desc Register user
 // @route POST /api/auth/register
-export const registerUser = async (req, res) => {
+export const registerUser: RequestHandler<NoParams, AuthResponse | ErrorResponse, RegisterBody | undefined> = async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
 
@@ -48,22 +69,22 @@ export const registerUser = async (req, res) => {
     return res.status(201).json(userResponse(user));
   } catch (error) {
     // The unique email index also handles simultaneous registrations.
-    if (error.code === 11000) {
+    if (errorCode(error) === 11000) {
       return res.status(409).json({ message: "User already exists" });
     }
 
-    if (error.name === "ValidationError") {
+    if (errorName(error) === "ValidationError") {
       return res.status(400).json({ message: "Invalid user data" });
     }
 
-    console.error("Registration failed:", error.message);
+    console.error("Registration failed:", errorMessage(error));
     return res.status(500).json({ message: "Server error" });
   }
 };
 
 // @desc Login user
 // @route POST /api/auth/login
-export const loginUser = async (req, res) => {
+export const loginUser: RequestHandler<NoParams, AuthResponse | ErrorResponse, LoginBody | undefined> = async (req, res) => {
   try {
     const { email, password } = req.body ?? {};
 
@@ -84,19 +105,20 @@ export const loginUser = async (req, res) => {
 
     return res.status(200).json(userResponse(user));
   } catch (error) {
-    console.error("Login failed:", error.message);
+    console.error("Login failed:", errorMessage(error));
     return res.status(500).json({ message: "Server error" });
   }
 };
 
 // @desc Get the authenticated user's current profile
 // @route GET /api/auth/profile
-export const getUserProfile = (req, res) => {
+export const getUserProfile: RequestHandler<NoParams, UserProfile> = (req, res) => {
+  const user = requireUser(req);
   res.set("Cache-Control", "no-store");
   return res.status(200).json({
-    _id: req.user._id,
-    name: req.user.name,
-    email: req.user.email,
-    isAdmin: req.user.isAdmin
+    _id: String(user._id),
+    name: user.name,
+    email: user.email,
+    isAdmin: user.isAdmin
   });
 };

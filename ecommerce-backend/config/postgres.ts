@@ -22,12 +22,23 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-export async function checkPostgresConnection() {
-  const result = await pool.query(
+export interface PostgresConnectionInfo {
+  database_name: string;
+  user_name: string;
+  version: string;
+}
+
+export async function checkPostgresConnection(): Promise<PostgresConnectionInfo> {
+  const result = await pool.query<PostgresConnectionInfo>(
     "SELECT current_database() AS database_name, current_user AS user_name, version() AS version",
   );
 
-  return result.rows[0];
+  const [connection] = result.rows;
+  if (!connection) {
+    throw new Error("PostgreSQL returned no connection details");
+  }
+
+  return connection;
 }
 
 export default pool;

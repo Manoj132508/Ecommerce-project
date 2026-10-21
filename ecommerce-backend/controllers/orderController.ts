@@ -1,9 +1,23 @@
+import type { RequestHandler } from "express";
+import { requireUser } from "../middleware/authMiddleware.js";
 import CartItem from "../models/CartItem.js";
 import DeliveryOption from "../models/DeliveryOption.js";
-import Order from "../models/Order.js";
+import Order, { type OrderDocument } from "../models/Order.js";
 import Product from "../models/Product.js";
+import type { CustomerDetails, ErrorResponse, ProductSnapshot } from "../types/api.js";
+import { errorMessage } from "../utils/errors.js";
 
-const addProductDetails = async (order) => {
+type NoParams = Record<string, string>;
+type OrderParams = { orderId: string };
+
+// Untrusted checkout form; every field is validated before use.
+type CustomerBody = { [Field in keyof CustomerDetails]?: unknown };
+
+interface CreateOrderBody {
+  customer?: CustomerBody | null;
+}
+
+const addProductDetails = async (order: OrderDocument) => {
   const products = await Promise.all(
     order.products.map(async (orderProduct) => {
       const storedOrderProduct = orderProduct.toObject();
@@ -26,48 +40,51 @@ const addProductDetails = async (order) => {
 };
 
 // GET /api/orders
-export const getOrders = async (req, res) => {
+export const getOrders: RequestHandler<NoParams> = async (req, res) => {
   try {
-    const filter = req.user.isAdmin ? {} : { userId: String(req.user._id) };
-    let orders = await Order.find(filter).sort({ orderTimeMs: -1 });
+    const user = requireUser(req);
+    const filter = user.isAdmin ? {} : { userId: String(user._id) };
+    const orders = await Order.find(filter).sort({ orderTimeMs: -1 });
 
     // console.log("Fetching orders:", orders);
 
     if (req.query.expand === "products") {
-      orders = await Promise.all(orders.map(addProductDetails));
+      return res.json(await Promise.all(orders.map(addProductDetails)));
     }
 
-    res.json(orders);
+    return res.json(orders);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // GET /api/orders/:orderId
-export const getOrder = async (req, res) => {
+export const getOrder: RequestHandler<OrderParams> = async (req, res) => {
   try {
+    const user = requireUser(req);
     const order = await Order.findById(req.params.orderId);
 
     if (
       !order ||
-      (!req.user.isAdmin && order.userId !== String(req.user._id))
+      (!user.isAdmin && order.userId !== String(user._id))
     ) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
     }
 
     if (req.query.expand === "products") {
       return res.json(await addProductDetails(order));
     }
 
-    res.json(order);
+    return res.json(order);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };
 
 // POST /api/orders
-export const createOrder = async (req, res) => {
+export const createOrder: RequestHandler<NoParams, unknown, CreateOrderBody | undefined> = async (req, res) => {
   try {
+    const user = requireUser(req);
     const customer = req.body?.customer;
 
     if (
@@ -80,13 +97,13 @@ export const createOrder = async (req, res) => {
       typeof customer.postalCode !== "string" || !customer.postalCode.trim() ||
       typeof customer.country !== "string" || !customer.country.trim()
     ) {
-      return res.status(400).json({ message: "Please provide complete customer details" });
+      return res.status(400).json({ message: "Please provide complete customer details" } satisfies ErrorResponse);
     }
 
     const cartItems = await CartItem.find().sort({ createdAt: 1 });
 
     if (cartItems.length === 0) {
-      return res.status(400).json({ message: "Cart is empty" });
+      return res.status(400).json({ message: "Cart is empty" } satisfies ErrorResponse);
     }
 
     const cartDetails = await Promise.all(
@@ -112,25 +129,33 @@ export const createOrder = async (req, res) => {
     }
 
     if (cartDetails.some(({ deliveryOption }) => !deliveryOption)) {
-      return res.status(400).json({ message: "A cart item has an invalid delivery option" });
+      return res.status(400).json({ message: "A cart item has an invalid delivery option" } satisfies ErrorResponse);
     }
+
+    // Both checks above guarantee every line has a product and a delivery
+    // option; this narrows the types without dropping or reordering lines.
+    const checkedDetails = cartDetails.flatMap(({ cartItem, product, deliveryOption }) => (
+      product && deliveryOption ? [{ cartItem, product, deliveryOption }] : []
+    ));
 
     let totalCostBeforeTaxCents = 0;
 
-    const products = cartDetails.map(({ cartItem, product, deliveryOption }) => {
+    const products = checkedDetails.map(({ cartItem, product, deliveryOption }) => {
       totalCostBeforeTaxCents +=
         product.priceCents * cartItem.quantity + deliveryOption.priceCents;
 
+      const snapshot: ProductSnapshot = {
+        id: product.id,
+        image: product.image,
+        name: product.name,
+        priceCents: product.priceCents,
+        description: product.description,
+        category: product.category
+      };
+
       return {
         productId: cartItem.productId,
-        product: {
-          id: product.id,
-          image: product.image,
-          name: product.name,
-          priceCents: product.priceCents,
-          description: product.description,
-          category: product.category
-        },
+        product: snapshot,
         quantity: cartItem.quantity,
         estimatedDeliveryTimeMs:
           Date.now() + deliveryOption.deliveryDays * 24 * 60 * 60 * 1000
@@ -138,7 +163,7 @@ export const createOrder = async (req, res) => {
     });
 
     const order = await Order.create({
-      userId: String(req.user._id),
+      userId: String(user._id),
       customer: {
         fullName: customer.fullName.trim(),
         email: customer.email.trim().toLowerCase(),
@@ -154,8 +179,8 @@ export const createOrder = async (req, res) => {
     });
 
     await CartItem.deleteMany();
-    res.status(201).json(order);
+    return res.status(201).json(order);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: errorMessage(error) });
   }
 };

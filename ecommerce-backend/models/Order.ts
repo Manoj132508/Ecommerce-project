@@ -50,7 +50,7 @@ const orderSchema = new mongoose.Schema(
     versionKey: false,
     toJSON: {
       virtuals: true,
-      transform: (_document, order) => {
+      transform: (_document, order: Record<string, unknown>) => {
         order.id = order._id;
         delete order._id;
       }
@@ -59,5 +59,7 @@ const orderSchema = new mongoose.Schema(
 );
 
 const Order = mongoose.model("Order", orderSchema);
+
+export type OrderDocument = InstanceType<typeof Order>;
 
 export default Order;

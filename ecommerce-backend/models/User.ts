@@ -12,8 +12,17 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
     versionKey: false,
     toJSON: {
-      transform: (_document, user) => {
+      transform: (_document, user: Record<string, unknown>) => {
         delete user.password;
+      }
+    },
+    methods: {
+      async matchPassword(password: string): Promise<boolean> {
+        if (!this.password) {
+          return false;
+        }
+
+        return bcrypt.compare(password, this.password);
       }
     }
   }
@@ -25,27 +34,16 @@ userSchema.pre("save", async function () {
   }
 
   if (Buffer.byteLength(this.password, "utf8") > 72) {
-    const error = new mongoose.Error.ValidationError(this);
-    error.addError("password", new mongoose.Error.ValidatorError({
-      path: "password",
-      message: "Password must be no more than 72 bytes"
-    }));
-    throw error;
+    // invalidate() builds the same ValidationError(this) that addError produced.
+    throw this.invalidate("password", "Password must be no more than 72 bytes");
   }
 
   this.password = await bcrypt.hash(this.password, 12);
 });
 
-userSchema.methods.matchPassword = async function (password) {
-  if (!this.password) {
-    return false;
-  }
-
-  return bcrypt.compare(password, this.password);
-};
-
 const User = mongoose.model("User", userSchema);
 
-export default User;
+export type UserDocument = InstanceType<typeof User>;
 
+export default User;
 

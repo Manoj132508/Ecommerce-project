@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const connectDB = async () => {
+const connectDB = async (): Promise<void> => {
   if (!process.env.MONGODB_URI) {
     throw new Error("MONGODB_URI is missing from .env");
   }

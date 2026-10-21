@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { errorCode } from "../utils/errors.js";
 
 const envPath = fileURLToPath(new URL("../.env.postgres", import.meta.url));
 const password = randomBytes(32).toString("hex");
@@ -24,7 +25,7 @@ try {
 
   console.log("Created .env.postgres with a private random password.");
 } catch (error) {
-  if (error.code === "EEXIST") {
+  if (errorCode(error) === "EEXIST") {
     console.log(".env.postgres already exists; left it unchanged.");
   } else {
     throw error;

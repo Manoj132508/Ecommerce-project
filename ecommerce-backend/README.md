@@ -1,10 +1,31 @@
 # Ecommerce backend
 
-Install dependencies with `npm install`, configure `.env` using `.env.example`,
-then start the API with `npm run dev`. Keep `JWT_SECRET` private and stable so
-existing tokens remain valid. The server requires `MONGODB_URI` and `JWT_SECRET`.
-Set `CLIENT_URL` to the deployed frontend origin. Multiple allowed origins can
-be supplied as a comma-separated list.
+Express API written in TypeScript (strict mode), using MongoDB through
+Mongoose. Install dependencies with `npm install`, configure `.env` using
+`.env.example`, then start the API with `npm run dev`. Keep `JWT_SECRET`
+private and stable so existing tokens remain valid. The server requires
+`MONGODB_URI` and `JWT_SECRET`. Set `CLIENT_URL` to the deployed frontend
+origin. Multiple allowed origins can be supplied as a comma-separated list.
+All environment variables are documented in `types/environment.d.ts`.
+
+## Development, build and production
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Runs `server.ts` with `tsx watch` (no build step; restarts on change) |
+| `npm run typecheck` | Type-checks all TypeScript, including scripts (`tsconfig.json`) |
+| `npm run build` | Deletes `dist/`, then compiles the server into it (`tsconfig.build.json`) |
+| `npm start` | Runs the compiled server: `node dist/server.js`. **Run `npm run build` first** |
+| `npm test` | Runs the Vitest suites (see Tests) |
+
+The build needs the dev dependencies (`typescript`), so a deployment must
+install them, run `npm run build`, then `npm start`. `dist/` is git-ignored.
+Scripts in `scripts/` run from source through `tsx` and are not part of the
+build.
+
+Imports use `.js` extensions (for example `./models/User.js`) even though the
+files are `.ts`. Node's ESM resolution requires this, and TypeScript, `tsx` and
+Vitest all map them to the `.ts` sources.
 
 ## Authentication
 
@@ -52,8 +73,10 @@ Returns the current user's `_id`, `name`, `email`, and `isAdmin`. It does not
 return a password or issue a new token. Missing, invalid, or expired tokens,
 and tokens belonging to deleted users, return 401. Server failures return 500.
 
-The existing product, cart, and order routes remain public; user-specific
-carts are separate work.
+Product and delivery-option reads and all cart routes are public; order routes
+require a token, and product writes require an admin. The cart is currently
+shared by everyone. User-specific carts (approved decision D1 in
+`MIGRATION_PLAN.md`) are planned work.
 
 ## Local PostgreSQL 17 with Docker Compose
 

@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";
 import { createApp } from "./app.js";
+import { errorMessage } from "./utils/errors.js";
 
 dotenv.config();
 
@@ -20,7 +21,7 @@ async function startServer() {
       console.log(`Server is running on port ${PORT}`);
     });
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${String(errorMessage(error))}`);
     process.exitCode = 1;
   }
 }

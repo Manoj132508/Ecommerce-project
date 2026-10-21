@@ -1,0 +1,22 @@
+{
+  // Production build: compiles only the files the API server needs into dist/.
+  // Tests and one-off scripts are type-checked by tsconfig.json but not shipped.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "sourceMap": true
+  },
+  "include": [
+    "app.ts",
+    "server.ts",
+    "config/**/*.ts",
+    "controllers/**/*.ts",
+    "middleware/**/*.ts",
+    "models/**/*.ts",
+    "routes/**/*.ts",
+    "types/**/*.ts",
+    "utils/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "test", "scripts"]
+}

@@ -110,6 +110,22 @@ describe("POST /api/cart-items", () => {
     expect(await CartItem.countDocuments()).toBe(1);
   });
 
+  // CURRENT FLAW (MIGRATION_PLAN.md R18), NOT THE TARGET CONTRACT: productId is
+  // not checked to be a string, so a MongoDB operator object reaches the queries.
+  test("current flaw: an operator-object productId increments an arbitrary existing line", async () => {
+    await insertCartItem({ productId: tshirt._id, quantity: 1 });
+    const response = await addToCart({ $ne: null }, 4);
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({ productId: tshirt._id, quantity: 5 });
+  });
+
+  test("current flaw: with an empty cart it is a 500 that leaks the cast error", async () => {
+    const response = await addToCart({ $ne: null }, 1);
+    expect(response.status).toBe(500);
+    expect(response.body.message).toMatch(/^CartItem validation failed: productId: Cast to string failed/);
+    expect(await CartItem.countDocuments()).toBe(0);
+  });
+
   test("validation gap: accepts a fractional quantity", async () => {
     // A PostgreSQL integer column would reject this; Phase 3 must decide explicitly.
     const response = await addToCart(socks._id, 1.5);
@@ -147,6 +163,14 @@ describe("PUT /api/cart-items/:productId", () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ message: "Invalid delivery option" });
     expect(await CartItem.findOne().lean()).toMatchObject({ quantity: 2, deliveryOptionId: "1" });
+  });
+
+  // CURRENT FLAW (MIGRATION_PLAN.md R18), NOT THE TARGET CONTRACT.
+  test("current flaw: an operator-object deliveryOptionId passes the lookup, then fails as a 500 leaking the cast error", async () => {
+    const response = await api().put(cartPath(socks._id)).send({ deliveryOptionId: { $ne: null } });
+    expect(response.status).toBe(500);
+    expect(response.body.message).toMatch(/^CartItem validation failed: deliveryOptionId: Cast to string failed/);
+    expect(await CartItem.findOne().lean()).toMatchObject({ deliveryOptionId: "1" });
   });
 
   test("updates quantity and delivery option and returns the cart item", async () => {

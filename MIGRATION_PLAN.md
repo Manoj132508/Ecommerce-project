@@ -1,6 +1,8 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phase 0 complete. Phase 1 complete except owner-gated items (1.4, 1.7). D1–D4 approved 2026-10-21.**
+Status: **Phases 0–2 complete locally (Phase 2 awaiting review; Phase 3 not started). Owner-gated: 0.5, 0.6, 1.7, production deploy. D1–D4 approved 2026-10-21.**
+
+> **Production blocker (unchanged since Phase 0):** the production backend host and database cannot be identified from the repository. There are no deploy config files (`render.yaml`, `Procfile`, `vercel.json`, Dockerfile, CI workflows) and no host or Atlas references. The frontend's `VITE_API_URL` lives in Vercel project settings, outside the repo. Until the owner supplies the host, its build/start commands and the database location, nobody can back up the production DB, re-check the 1.4 backfills there, or deploy anything after Phase 1. Phase 2 also changes the start command (R21).
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
 
 Target stack:
@@ -283,10 +285,14 @@ Field-level conversions:
 | R11 | Auth test suite deleted in WIP → no regression net for auth | ~~Medium~~ **Resolved** | All 24 original cases ported to Vitest in Phase 1 |
 | R12 | `docker compose down -v` deletes Postgres data | Medium | Never use `-v`; `pg_dump` before each ETL rerun |
 | R13 | Dual-write / split-brain if some domains read Mongo and others Postgres while sharing IDs | Medium | Migrate domains in dependency order; cut over all writes for a domain at once; no dual-write |
-| R14 | Cart quantity validation gaps (found in Phase 1): POST accepts fractional quantities (`1.5`); re-adding can exceed 10; PUT has no upper bound | Medium | Pinned in `cart.test.js`. `integer` + `CHECK (quantity BETWEEN 1 AND …)` would reject current data/requests: decide limits explicitly in Phase 4.4 and verify no stored fractional quantities before ETL |
-| R15 | Non-JSON errors (found in Phase 1): unknown routes (404), malformed JSON (400) and CORS rejections (500) return Express's HTML error page, with stack traces unless `NODE_ENV=production`; cart/order/payment 500s leak `error.message` | Medium | Pinned in `app.test.js`/`cart.test.js`. Confirm production sets `NODE_ENV=production`; add a JSON error handler in Phase 2.5 as a deliberate contract change |
-| R16 | Product `PUT` replaces `keywords` with `[category]`, discarding seeded keywords used by client-side search | Low | Pinned in `products.test.js`; keep for parity, revisit separately |
+| R14 | Cart quantity validation gaps (found in Phase 1): POST accepts fractional quantities (`1.5`); re-adding can exceed 10; PUT has no upper bound | Medium | Pinned in `cart.test.js`. `integer` + `CHECK (quantity BETWEEN 1 AND …)` would reject current data/requests: **decided: FD1** (integer 1–10); 0 fractional quantities in live data |
+| R15 | Non-JSON errors (found in Phase 1): unknown routes (404), malformed JSON (400) and CORS rejections (500) return Express's HTML error page, with stack traces unless `NODE_ENV=production`; cart/order/payment 500s leak `error.message` | Medium | Pinned in `app.test.js`/`cart.test.js`. Confirm production sets `NODE_ENV=production`; **decided: FD2** (safe JSON errors), as a deliberate contract change |
+| R16 | Product `PUT` replaces `keywords` with `[category]`, discarding seeded keywords used by client-side search | Low | Pinned in `products.test.js`; **decided: FD3** (keep keywords unless explicitly updated) |
 | R17 | Mongoose deprecation: `findByIdAndUpdate(..., { new: true })` (productController) warns under Mongoose 9 | Low | Code is replaced in Phase 4.2; no change now |
+| R18 | **NoSQL operator injection (found in Phase 2 by the type checker).** `POST /api/cart-items` passes `productId` from the body to `findById`/`findOne` unvalidated: `{"productId":{"$ne":null}}` increments an arbitrary existing cart line, or returns a 500 leaking the cast error. `PUT /api/cart-items/:id` with an operator-object `deliveryOptionId` passes the lookup, then fails as a leaking 500 | **High** | Pinned by 3 "current flaw" tests in `cart.test.js` (verified identical against the original JavaScript). Typed without casts and **not fixed in Phase 2** (behaviour must not change silently). Fix with approval: require `typeof productId === "string"` / `typeof deliveryOptionId === "string"`, or enable Mongoose `sanitizeFilter`. Postgres parameterised SQL removes the class in Phase 4.4 |
+| R19 | `config/postgres.ts` finds `.env.postgres` relative to its own file (`../.env.postgres`). From `dist/config/` that points at `dist/.env.postgres` | Low | Harmless today: only `tsx` scripts import it. Fix in Phase 3.1 before the server imports the pool (resolve from the package root, or rely on real env vars in production) |
+| R20 | `npm audit`: 5 advisories (1 critical, 2 high, 2 moderate), all in **Express 4.21.2's own dependency tree** (proxy-addr, path-to-regexp, qs, body-parser). Pre-existing on `main`, not introduced by Phase 2 | High | Fix is semver-minor: `npm audit fix` (Express 4.22.x). Changes a production runtime dependency, so do it as its own approved commit with the full test suite and parity check. proxy-addr only matters with `trust proxy` (not set) |
+| R21 | **Phase 2 changes how the backend starts.** `server.js` no longer exists; production must run `npm ci` (with dev dependencies) → `npm run build` → `npm start` (`node dist/server.js`). A host still running `node server.js`, or installing with `--omit=dev`, fails to start | **High (deploy blocker)** | Nothing deployed. Before deploying `migration/postgres`, update the backend host's build command to `npm ci && npm run build` and the start command to `npm start`. Rollback: redeploy `main` or `pre-pg-migration`, which still use `node server.js` |
 
 ### Approved decisions (2026-10-21)
 
@@ -296,6 +302,14 @@ Field-level conversions:
 - **D4 — Preserve historical orders; no invented snapshots.** Legacy lines migrate with `is_legacy = true`, null snapshot columns and no FK on `product_id`, and keep the current LEFT JOIN lookup (current product or `null`). New lines require a `snapshot_name` and `snapshot_price_cents` (CHECK constraint) plus `quantity`, and `order_items` rejects UPDATE (trigger). Pinned in `orders.test.js`, including snapshot immutability after product edit and delete.
 
 ---
+
+### Recorded future implementation decisions (owner, 2026-10-21)
+
+Recorded during Phase 2 and **not implemented in Phase 2**, because Phase 2 must not change behaviour. Each will be its own commit, turning the matching "current behaviour" tests into target-contract tests.
+
+- **FD1 — Cart quantity is an integer from 1 to 10.** Applies to POST (add), re-adding the same product (the merged total must stay ≤ 10) and PUT (update). Replaces today's gaps (fractional `1.5`, merges past 10, no PUT upper bound; R14). Postgres: `quantity integer NOT NULL CHECK (quantity BETWEEN 1 AND 10)`. Live data verified: 0 fractional quantities. Suggested timing: with D1 in Phase 4.4.
+- **FD2 — API errors are safe JSON.** Every error response is `{ "message": string }` with a fixed, non-internal message: no raw `error.message` (today cart/order/delivery 500s leak it, and so does R18), no HTML pages, no stack traces. This includes a JSON 404 for unknown routes, a JSON 400 for malformed bodies and a JSON 403 for disallowed CORS origins (R15). Details are logged server-side only. Supersedes the old step 2.5. Suggested timing: a dedicated commit before Phase 4, so every Postgres-backed domain inherits it.
+- **FD3 — Product edits keep search keywords unless explicitly updated.** `PUT /api/products/:id` stops replacing `keywords` with `[category]`. Keywords change only when the request includes them. Create keeps today's default (`[category]`) when none are sent (R16). Suggested timing: Phase 4.2 (products cut-over).
 
 ## 5. Repository layout recommendation
 
@@ -360,15 +374,45 @@ Test files (`ecommerce-backend/test/`):
 
 ### Phase 2 — Backend TypeScript toolchain (behaviour unchanged)
 
-- [ ] 2.1 Add `typescript`, `tsx`, `@types/express`, `@types/pg`, `@types/jsonwebtoken`, `@types/bcryptjs`, `@types/cors`; `tsconfig.json` with `allowJs: true`, `strict: true`, `outDir: dist`
-- [ ] 2.2 Scripts: `dev: tsx watch src/server.ts`, `build: tsc`, `start: node dist/server.js`, `typecheck: tsc --noEmit`
-- [ ] 2.3 Move sources under `src/` and convert leaf files first: `utils/`, `config/`, `middleware/`, `routes/`, then `server.ts`. Controllers stay JS until their domain migrates
-- [ ] 2.4 `src/types/api.ts` — response types copied from the frontend `src/types`
-- [ ] 2.5 `src/lib/errors.ts` — stop returning raw `error.message` on 500s (keep `{message}` envelope)
-- [ ] 2.6 Update production build/start commands on the backend host
+**Status: complete locally on `migration/postgres` (2026-10-21), awaiting review. MongoDB remains the only runtime database.**
 
-**Acceptance:** characterisation suite green unchanged; `tsc --noEmit` green; production deploy healthy.
-**Rollback:** revert the phase commits; restore old start command.
+- [x] 2.1 Toolchain: `typescript ~6.0.3` (same as the frontend), `tsx`, `@types/node@24`, `@types/express@4` (Express is v4), `@types/cors`, `@types/jsonwebtoken`, `@types/pg`. bcryptjs, mongoose and dotenv ship their own types. `nodemon` removed (unused)
+- [x] 2.2 `tsconfig.json`: `strict`, `noUncheckedIndexedAccess`, `noImplicitReturns`, `noImplicitOverride`, `useUnknownInCatchVariables`, `verbatimModuleSyntax`, `module`/`moduleResolution: NodeNext`, `target`/`lib: ES2024` (Node 24), `noEmit`. `tsconfig.build.json` compiles only the runtime files to `dist/` with source maps
+- [x] 2.3 Scripts: `dev` (`tsx watch server.ts`), `typecheck`, `build` (clean + `tsc -p tsconfig.build.json`), `start` (`node dist/server.js`). Ops scripts now run through `tsx`
+- [x] 2.4 Files converted **in place** (no move to `src/`; this avoided churn in every test import and keeps history as `git mv` renames). Order: utils/config → models → middleware → controllers → routes → app/server → scripts → vitest config. `npm test` ran after each step
+- [x] 2.5 `types/api.ts`: wire contracts mirroring the frontend `src/types`. `types/environment.d.ts`: every env var. `types/express.d.ts`: `req.user`. `AuthTokenPayload` + type guard in the auth middleware
+- [x] 2.6 ~~Stop returning raw `error.message`~~ Moved to **FD2**: it's a behaviour change, so it isn't part of Phase 2. `utils/errors.ts` reproduces the existing reads exactly
+- [ ] 2.7 Owner-gated: update the production host's build/start commands (R21), then deploy. Blocked on 0.6
+
+File-by-file record (24 JavaScript source files converted; the 9 test-suite files stay JavaScript on purpose so the regression baseline is unchanged while it verifies the conversion):
+
+| Area | Files | Typing notes |
+| --- | --- | --- |
+| Utils | `utils/productInformation.ts`; new `utils/errors.ts` | `ProductLabels`/`ProductInformation` interfaces; structural `errorMessage`/`errorName`/`errorCode` readers for `unknown` catch values |
+| Config | `config/db.ts`, `config/postgres.ts` | `PostgresConnectionInfo` row type (R19 noted) |
+| Models | `CartItem`, `DeliveryOption`, `Order`, `Product`, `User` | Types inferred from the schemas (Mongoose 9). `toJSON` transforms typed as `Record<string, unknown>`. `matchPassword` moved into the schema `methods` option. 72-byte check now throws `this.invalidate(...)`, the same `ValidationError(this)` as before. `UserDocument`/`OrderDocument` exported |
+| Middleware | `authMiddleware.ts` | `RequestHandler`; `AuthTokenPayload` guard; same check order (header → secret → HS256/exp/nbf → 24-hex id → user); new `requireUser(req)` |
+| Controllers | `auth`, `product`, `cart`, `order` | Bodies typed as `unknown` fields and validated exactly as before. Cart: `where().equals()` / `new Model().save()` / `doc.set()` carry the unvalidated value without casts (R18 preserved) |
+| Routes | 4 route files | No edits needed |
+| Entry | `app.ts`, `server.ts` | `createApp(): Express` |
+| Scripts | 4 ops scripts | Typed error handling; run via `tsx` |
+| Tests | `vitest.config.ts`; 9 suite files stay `.js` | Vitest resolves `../x.js` → `x.ts` |
+
+Results (2026-10-21):
+
+- `npm run typecheck`: **0 errors** in 28 TypeScript files. **0** `any`, **0** `@ts-ignore`/`@ts-expect-error`, **0** `as` assertions, **0** non-null assertions
+- `npm test`: **104 passed, 9 todo, 0 failed** (101 Phase 1 tests + 3 new R18 "current flaw" tests, each verified against the original JavaScript before conversion)
+- `npm run build`: 21 files in `dist/`, no tests or scripts
+- Real-data parity: the original JS server (`ced0ff8`) and compiled `dist/` server, side by side on the dev DB, gave **32/32 byte-identical responses** (every GET endpoint, all 8 orders plain and expanded, the 401/404 paths, headers included). Read-only
+- `npm run dev` and `npm start` both serve the API; `npm run postgres:check` works through `tsx`
+
+Behaviour changes: **none in API responses.** Internal-only differences:
+1. The 72-byte password `ValidatorError` now has `kind: "user defined"` (was `undefined`); the API still answers 400 "Invalid user data".
+2. A thrown non-object would now produce `{}` instead of crashing the handler (unreachable with Mongoose).
+3. Handlers reached without `protect` throw a descriptive error instead of a `TypeError` (unreachable: every such route uses `protect`).
+
+**Acceptance:** suite green with unchanged assertions ✔; typecheck green ✔; build green ✔; real-data parity ✔; production deploy pending (R21, 0.6).
+**Rollback:** `git revert` the Phase 2 commit; production keeps running `main`, which uses `node server.js`.
 
 ### Phase 3 — Postgres schema, data access layer and ETL (Mongo still live)
 
@@ -518,9 +562,9 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Phase 0 and Phase 1 are done locally on branch `migration/postgres` (not yet pushed). Before Phase 2:
+Phase 1 is committed and pushed (`ced0ff8` on `origin/migration/postgres`). Phase 2 is complete locally and awaiting review. **Phase 3 waits for owner approval.**
 
-1. Owner review of the Phase 1 changes; approve pushing `migration/postgres` to `origin`.
-2. Owner: identify the production backend/database host (0.6), back it up the same way (§7), and re-check backfills there (1.4).
-3. Owner-gated 1.7: smoke test and deploy. Phase 1 changes no runtime behaviour, but `server.js` now imports `app.js`, so the deploy confirms the split.
-4. Then Phase 2 (backend TypeScript toolchain), with `npm test` as the gate for every step.
+1. Owner: review Phase 2 and approve committing/pushing it to `migration/postgres`.
+2. Owner: decide R18 (operator injection) and R20 (Express security update). Both are small, separately testable commits; recommended before any production deploy of this branch.
+3. Owner: resolve the production blocker (0.6). Identify the host and database, back up the DB (§7), re-check 1.4, and apply the R21 build/start commands before any deploy.
+4. Then Phase 3 (Postgres schema, repositories, ETL), with `npm test` and the parity check as gates.

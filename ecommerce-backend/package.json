@@ -1,18 +1,21 @@
 {
   "name": "ecommerce-backend",
   "version": "1.0.0",
-  "description": "Express and MongoDB API for the React ecommerce project",
+  "description": "Express + TypeScript and MongoDB API for the React ecommerce project",
   "license": "ISC",
   "author": "",
   "type": "module",
-  "main": "server.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "postgres:env": "node scripts/createPostgresEnv.js",
-    "postgres:check": "node scripts/checkPostgresConnection.js",
-    "migrate:product-descriptions": "node scripts/populateProductDescriptions.js",
-    "migrate:product-categories": "node scripts/populateProductCategories.js",
+    "start": "node dist/server.js",
+    "dev": "tsx watch server.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "postgres:env": "tsx scripts/createPostgresEnv.ts",
+    "postgres:check": "tsx scripts/checkPostgresConnection.ts",
+    "migrate:product-descriptions": "tsx scripts/populateProductDescriptions.ts",
+    "migrate:product-categories": "tsx scripts/populateProductCategories.ts",
     "test": "vitest run"
   },
   "dependencies": {
@@ -25,9 +28,15 @@
     "pg": "^8.16.3"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
     "mongodb-memory-server": "^11.3.0",
-    "nodemon": "^3.1.9",
     "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
     "vitest": "^5.0.5"
   }
 }

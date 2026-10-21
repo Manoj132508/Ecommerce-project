@@ -1,4 +1,7 @@
-let pool;
+import type { Pool } from "pg";
+import { errorMessage } from "../utils/errors.js";
+
+let pool: Pool | undefined;
 try {
   const postgres = await import("../config/postgres.js");
   pool = postgres.default;
@@ -10,7 +13,7 @@ try {
   );
   console.log(connection.version);
 } catch (error) {
-  console.error(`PostgreSQL connection failed: ${error.message}`);
+  console.error(`PostgreSQL connection failed: ${String(errorMessage(error))}`);
   process.exitCode = 1;
 } finally {
   await pool?.end();
