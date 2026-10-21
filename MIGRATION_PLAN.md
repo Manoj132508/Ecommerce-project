@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–2 complete locally (Phase 2 awaiting review; Phase 3 not started). Owner-gated: 0.5, 0.6, 1.7, production deploy. D1–D4 approved 2026-10-21.**
+Status: **Phases 0–2 committed and pushed; R18 (operator injection) fixed. Phase 3 not started, awaiting owner approval. Owner-gated: 0.5, 0.6, 1.7, production deploy. D1–D4 approved 2026-10-21.**
 
 > **Production blocker (unchanged since Phase 0):** the production backend host and database cannot be identified from the repository. There are no deploy config files (`render.yaml`, `Procfile`, `vercel.json`, Dockerfile, CI workflows) and no host or Atlas references. The frontend's `VITE_API_URL` lives in Vercel project settings, outside the repo. Until the owner supplies the host, its build/start commands and the database location, nobody can back up the production DB, re-check the 1.4 backfills there, or deploy anything after Phase 1. Phase 2 also changes the start command (R21).
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -94,16 +94,16 @@ The production database location is **unknown from the repo** (backend host isn'
 | A3 | `GET /api/auth/profile` | Bearer | — | 200 `{_id,name,email,isAdmin}`, `Cache-Control: no-store`; 401 |
 | P1 | `GET /api/products` | — | — | `Product[]` sorted by `createdAt` asc |
 | P2 | `POST /api/products` | admin | `{name,price(dollars),description,howItWorks,highlights(string\|string[]),careInstructions,image,category,stock}` | 201 `Product`; 400 |
-| P3 | `PUT /api/products/:productId` | admin | same as P2 | 200 `Product`; 400; 404 |
-| P4 | `DELETE /api/products/:productId` | admin | — | 200 `{id}`; 404 |
+| P3 | `PUT /api/products/:productId` | admin | same as P2 | 200 `Product`; 400 (incl. **"Invalid product id"**, R18); 404 |
+| P4 | `DELETE /api/products/:productId` | admin | — | 200 `{id}`; 400 **"Invalid product id"** (R18); 404 |
 | D1 | `GET /api/delivery-options[?expand=estimatedDeliveryTime]` | — | — | `{id,deliveryDays,priceCents,createdAt,updatedAt[,estimatedDeliveryTimeMs]}[]` |
 | C1 | `GET /api/cart-items[?expand=product]` | **none** | — | `{id,productId,quantity,deliveryOptionId,createdAt,updatedAt[,product,unavailable]}[]` |
-| C2 | `POST /api/cart-items` | **none** | `{productId,quantity 1–10}` | 201 cart item (quantity is *added*); 400; 404 |
-| C3 | `PUT /api/cart-items/:productId` | **none** | `{quantity?,deliveryOptionId?}` | 200 cart item; 400; 404 |
-| C4 | `DELETE /api/cart-items/:productId` | **none** | — | 204; 404 |
+| C2 | `POST /api/cart-items` | **none** | `{productId (UUID string),quantity 1–10}` | 201 cart item (quantity is *added*); 400 (incl. **"Invalid product id"**, R18); 404 |
+| C3 | `PUT /api/cart-items/:productId` | **none** | `{quantity?,deliveryOptionId? (digit string)}` | 200 cart item; 400 (incl. **"Invalid product id"** / "Invalid delivery option", R18); 404 |
+| C4 | `DELETE /api/cart-items/:productId` | **none** | — | 204; 400 **"Invalid product id"** (R18); 404 |
 | C5 | `GET /api/payment-summary` | **none** | — | `{totalItems,productCostCents,shippingCostCents,totalCostBeforeTaxCents,taxCents,totalCostCents,unavailableProductIds}` |
 | O1 | `GET /api/orders[?expand=products]` | Bearer | — | `Order[]` by `orderTimeMs` desc; admin sees all |
-| O2 | `GET /api/orders/:orderId[?expand=products]` | Bearer | — | `Order`; 404 if not owner (unless admin) |
+| O2 | `GET /api/orders/:orderId[?expand=products]` | Bearer | — | `Order`; 400 **"Invalid order id"** (R18); 404 if not owner (unless admin) |
 | O3 | `POST /api/orders` | Bearer | `{customer:{fullName,email,phone,address,city,postalCode,country}}` | 201 `Order`; 400; 409 `{message,unavailableProductIds}` |
 
 `Product` = `{id,image,name,description,howItWorks,highlights[],careInstructions,category,stock,rating:{stars,count},priceCents,keywords[],createdAt,updatedAt}`
@@ -112,6 +112,22 @@ The production database location is **unknown from the repo** (backend host isn'
 Frontend TypeScript mirrors of these shapes already exist in `ecommerce-project/src/types/*.ts` — they become the contract source of truth.
 
 Error envelope everywhere: `{ message: string }`. Note: cart/order/delivery 500s currently leak `error.message` — keep the envelope, stop leaking internals.
+
+**Identifier contract (R18 fix, 2026-10-21).** Every identifier taken from a request must be a **string** in its entity's format, or the request gets a 400 before any database query (`utils/identifiers.ts`). Formats were verified against every identifier in the dev DB:
+
+| Identifier | Format | Where it is checked | 400 message |
+| --- | --- | --- | --- |
+| product id (body `productId`, path `:productId`) | UUID, canonical 8-4-4-4-12 hex, any version/case | C2, C3, C4, P3, P4 | `Invalid product id` |
+| order id (path `:orderId`) | UUID | O2 | `Invalid order id` |
+| delivery option id (body `deliveryOptionId`) | digit string, 1–10 digits (`"1"`, `"2"`, `"3"`) | C3 | `Invalid delivery option` (existing message) |
+| user id (JWT `id` claim) | 24-hex ObjectId | `protect` (unchanged; now uses the shared guard) | 401 `Not authorized` (unchanged) |
+
+Contract changes, all on malformed input only:
+- A missing or non-string `productId` on C2 was 404 "Product not found" and is now 400 "Invalid product id".
+- Malformed path IDs on C3, C4, P3, P4 and O2 were 404 (or a leaking 500) and are now 400.
+- A numeric `deliveryOptionId` (`3` instead of `"3"`) was accepted and is now 400.
+
+Authentication and authorisation still run first (401/403 before 400). Well-formed but unknown IDs still get 404. The frontend only ever sends IDs taken from API responses, so none of its requests change.
 
 ### Working features (to be regression-tested at every phase)
 
@@ -289,7 +305,7 @@ Field-level conversions:
 | R15 | Non-JSON errors (found in Phase 1): unknown routes (404), malformed JSON (400) and CORS rejections (500) return Express's HTML error page, with stack traces unless `NODE_ENV=production`; cart/order/payment 500s leak `error.message` | Medium | Pinned in `app.test.js`/`cart.test.js`. Confirm production sets `NODE_ENV=production`; **decided: FD2** (safe JSON errors), as a deliberate contract change |
 | R16 | Product `PUT` replaces `keywords` with `[category]`, discarding seeded keywords used by client-side search | Low | Pinned in `products.test.js`; **decided: FD3** (keep keywords unless explicitly updated) |
 | R17 | Mongoose deprecation: `findByIdAndUpdate(..., { new: true })` (productController) warns under Mongoose 9 | Low | Code is replaced in Phase 4.2; no change now |
-| R18 | **NoSQL operator injection (found in Phase 2 by the type checker).** `POST /api/cart-items` passes `productId` from the body to `findById`/`findOne` unvalidated: `{"productId":{"$ne":null}}` increments an arbitrary existing cart line, or returns a 500 leaking the cast error. `PUT /api/cart-items/:id` with an operator-object `deliveryOptionId` passes the lookup, then fails as a leaking 500 | **High** | Pinned by 3 "current flaw" tests in `cart.test.js` (verified identical against the original JavaScript). Typed without casts and **not fixed in Phase 2** (behaviour must not change silently). Fix with approval: require `typeof productId === "string"` / `typeof deliveryOptionId === "string"`, or enable Mongoose `sanitizeFilter`. Postgres parameterised SQL removes the class in Phase 4.4 |
+| R18 | **NoSQL operator injection (found in Phase 2 by the type checker).** `POST /api/cart-items` passed `productId` from the body to `findById`/`findOne` unvalidated: `{"productId":{"$ne":null}}` incremented an arbitrary existing cart line, or returned a 500 leaking the cast error. `PUT /api/cart-items/:id` with an operator-object `deliveryOptionId` passed the lookup, then failed as a leaking 500 | ~~High~~ **Fixed** (R18 commit) | Strict per-entity identifier guards (`utils/identifiers.ts`, see §2 "Identifier contract") reject objects, arrays, non-strings and malformed IDs with 400 before any query. All request inputs reaching Mongoose were inventoried; the others were already validated. `test/injection.test.js` (68 tests): `$ne`/`$gt`/`$regex`/`$where`/`$in`/`$exists`, nested objects, arrays, numbers, booleans, null, malformed and URL-encoded strings. Each asserts the exact 400, unchanged data and **no Mongoose call**. Against the vulnerable code it fails 57/68 (the 11 passes are positive controls). **Pre-deploy check:** run the read-only ID-format profile on production data (blocked by 0.6); any non-UUID product/order IDs there would now get 400s. Postgres parameterised SQL removes the class entirely in Phase 4 |
 | R19 | `config/postgres.ts` finds `.env.postgres` relative to its own file (`../.env.postgres`). From `dist/config/` that points at `dist/.env.postgres` | Low | Harmless today: only `tsx` scripts import it. Fix in Phase 3.1 before the server imports the pool (resolve from the package root, or rely on real env vars in production) |
 | R20 | `npm audit`: 5 advisories (1 critical, 2 high, 2 moderate), all in **Express 4.21.2's own dependency tree** (proxy-addr, path-to-regexp, qs, body-parser). Pre-existing on `main`, not introduced by Phase 2 | High | Fix is semver-minor: `npm audit fix` (Express 4.22.x). Changes a production runtime dependency, so do it as its own approved commit with the full test suite and parity check. proxy-addr only matters with `trust proxy` (not set) |
 | R21 | **Phase 2 changes how the backend starts.** `server.js` no longer exists; production must run `npm ci` (with dev dependencies) → `npm run build` → `npm start` (`node dist/server.js`). A host still running `node server.js`, or installing with `--omit=dev`, fails to start | **High (deploy blocker)** | Nothing deployed. Before deploying `migration/postgres`, update the backend host's build command to `npm ci && npm run build` and the start command to `npm start`. Rollback: redeploy `main` or `pre-pg-migration`, which still use `node server.js` |
@@ -565,6 +581,6 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 Phase 1 is committed and pushed (`ced0ff8` on `origin/migration/postgres`). Phase 2 is complete locally and awaiting review. **Phase 3 waits for owner approval.**
 
 1. Owner: review Phase 2 and approve committing/pushing it to `migration/postgres`.
-2. Owner: decide R18 (operator injection) and R20 (Express security update). Both are small, separately testable commits; recommended before any production deploy of this branch.
+2. R18 fixed. Owner: R20 (Express security update), a small separately testable commit recommended before any production deploy of this branch.
 3. Owner: resolve the production blocker (0.6). Identify the host and database, back up the DB (§7), re-check 1.4, and apply the R21 build/start commands before any deploy.
 4. Then Phase 3 (Postgres schema, repositories, ETL), with `npm test` and the parity check as gates.

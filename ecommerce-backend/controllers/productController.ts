@@ -3,9 +3,12 @@ import DeliveryOption from "../models/DeliveryOption.js";
 import Product from "../models/Product.js";
 import type { DeleteProductResponse, ErrorResponse } from "../types/api.js";
 import { errorMessage, errorName } from "../utils/errors.js";
+import { isProductId } from "../utils/identifiers.js";
 
 type NoParams = Record<string, string>;
 type ProductParams = { productId: string };
+
+const invalidProductId: ErrorResponse = { message: "Invalid product id" };
 
 // The admin product form posts strings; every field is validated before use.
 interface ProductFormBody {
@@ -122,6 +125,10 @@ export const createProduct: RequestHandler<NoParams, unknown, ProductFormBody | 
 // PUT /api/products/:productId
 export const updateProduct: RequestHandler<ProductParams, unknown, ProductFormBody | undefined> = async (req, res) => {
   try {
+    if (!isProductId(req.params.productId)) {
+      return res.status(400).json(invalidProductId);
+    }
+
     const productDetails = getProductDetails(req.body);
 
     if (!productDetails) {
@@ -152,6 +159,10 @@ export const updateProduct: RequestHandler<ProductParams, unknown, ProductFormBo
 // DELETE /api/products/:productId
 export const deleteProduct: RequestHandler<ProductParams, DeleteProductResponse | ErrorResponse> = async (req, res) => {
   try {
+    if (!isProductId(req.params.productId)) {
+      return res.status(400).json(invalidProductId);
+    }
+
     const product = await Product.findByIdAndDelete(req.params.productId);
 
     if (!product) {

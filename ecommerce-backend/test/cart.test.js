@@ -83,12 +83,17 @@ describe("POST /api/cart-items", () => {
     expect(await CartItem.countDocuments()).toBe(0);
   });
 
-  test("returns 404 for an unknown or missing product", async () => {
-    for (const productId of ["00000000-0000-4000-8000-000000000000", undefined]) {
-      const response = await addToCart(productId, 1);
-      expect(response.status).toBe(404);
-      expect(response.body).toEqual({ message: "Product not found" });
-    }
+  test("returns 404 for a well-formed but unknown product id", async () => {
+    const response = await addToCart("00000000-0000-4000-8000-000000000000", 1);
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ message: "Product not found" });
+    expect(await CartItem.countDocuments()).toBe(0);
+  });
+
+  test("returns 400 for a missing product id (was 404 before R18)", async () => {
+    const response = await addToCart(undefined, 1);
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: "Invalid product id" });
     expect(await CartItem.countDocuments()).toBe(0);
   });
 
@@ -110,19 +115,20 @@ describe("POST /api/cart-items", () => {
     expect(await CartItem.countDocuments()).toBe(1);
   });
 
-  // CURRENT FLAW (MIGRATION_PLAN.md R18), NOT THE TARGET CONTRACT: productId is
-  // not checked to be a string, so a MongoDB operator object reaches the queries.
-  test("current flaw: an operator-object productId increments an arbitrary existing line", async () => {
+  // R18 fixed: these two cases were exploitable before (an existing line was
+  // incremented, or a 500 leaked the Mongoose cast error).
+  test("R18: an operator-object productId is rejected with 400 and no existing line changes", async () => {
     await insertCartItem({ productId: tshirt._id, quantity: 1 });
     const response = await addToCart({ $ne: null }, 4);
-    expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({ productId: tshirt._id, quantity: 5 });
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: "Invalid product id" });
+    expect(await CartItem.find().lean()).toMatchObject([{ productId: tshirt._id, quantity: 1 }]);
   });
 
-  test("current flaw: with an empty cart it is a 500 that leaks the cast error", async () => {
+  test("R18: with an empty cart it is a 400 that exposes no internal error", async () => {
     const response = await addToCart({ $ne: null }, 1);
-    expect(response.status).toBe(500);
-    expect(response.body.message).toMatch(/^CartItem validation failed: productId: Cast to string failed/);
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: "Invalid product id" });
     expect(await CartItem.countDocuments()).toBe(0);
   });
 
@@ -165,12 +171,12 @@ describe("PUT /api/cart-items/:productId", () => {
     expect(await CartItem.findOne().lean()).toMatchObject({ quantity: 2, deliveryOptionId: "1" });
   });
 
-  // CURRENT FLAW (MIGRATION_PLAN.md R18), NOT THE TARGET CONTRACT.
-  test("current flaw: an operator-object deliveryOptionId passes the lookup, then fails as a 500 leaking the cast error", async () => {
+  // R18 fixed: this used to pass the lookup and fail as a 500 leaking the cast error.
+  test("R18: an operator-object deliveryOptionId is rejected with 400 and the line is unchanged", async () => {
     const response = await api().put(cartPath(socks._id)).send({ deliveryOptionId: { $ne: null } });
-    expect(response.status).toBe(500);
-    expect(response.body.message).toMatch(/^CartItem validation failed: deliveryOptionId: Cast to string failed/);
-    expect(await CartItem.findOne().lean()).toMatchObject({ deliveryOptionId: "1" });
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: "Invalid delivery option" });
+    expect(await CartItem.findOne().lean()).toMatchObject({ quantity: 2, deliveryOptionId: "1" });
   });
 
   test("updates quantity and delivery option and returns the cart item", async () => {

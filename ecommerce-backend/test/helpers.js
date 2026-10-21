@@ -11,6 +11,8 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const OBJECT_ID = /^[a-f\d]{24}$/i;
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// Well-formed (passes the R18 identifier checks) but matches no document.
+export const UNKNOWN_UUID = "00000000-0000-4000-8000-000000000000";
 
 export const api = () => request(createApp());
 

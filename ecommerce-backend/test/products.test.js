@@ -10,6 +10,7 @@ import {
   ISO_DATE,
   PRODUCTS,
   seedCatalog,
+  UNKNOWN_UUID,
   UUID,
 } from "./helpers.js";
 
@@ -197,14 +198,14 @@ describe("PUT /api/products/:productId", () => {
 
   test("validates the body before looking up the product", async () => {
     const { token } = await createAdmin();
-    const response = await api().put("/api/products/does-not-exist").set(bearer(token)).send({});
+    const response = await api().put(`/api/products/${UNKNOWN_UUID}`).set(bearer(token)).send({});
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ message: "Please provide valid product details" });
   });
 
-  test("returns 404 for an unknown product", async () => {
+  test("returns 404 for a well-formed but unknown product id", async () => {
     const { token } = await createAdmin();
-    const response = await api().put("/api/products/does-not-exist").set(bearer(token)).send(validForm);
+    const response = await api().put(`/api/products/${UNKNOWN_UUID}`).set(bearer(token)).send(validForm);
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ message: "Product not found" });
   });

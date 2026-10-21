@@ -15,6 +15,7 @@ import {
   ISO_DATE,
   PRODUCTS,
   seedCatalog,
+  UNKNOWN_UUID,
   UUID,
   validCustomer,
 } from "./helpers.js";
@@ -303,8 +304,8 @@ describe("GET /api/orders/:orderId", () => {
     }
   });
 
-  test("returns 404 for an unknown order id", async () => {
-    const response = await api().get("/api/orders/does-not-exist").set(bearer(shopper.token));
+  test("returns 404 for a well-formed but unknown order id", async () => {
+    const response = await api().get(`/api/orders/${UNKNOWN_UUID}`).set(bearer(shopper.token));
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ message: "Order not found" });
   });

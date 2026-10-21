@@ -2,6 +2,7 @@ import type { Request, RequestHandler } from "express";
 import jwt, { type JwtPayload } from "jsonwebtoken";
 import User, { type UserDocument } from "../models/User.js";
 import { errorMessage } from "../utils/errors.js";
+import { isUserId } from "../utils/identifiers.js";
 
 /** Claims issued by authController's generateToken. */
 export interface AuthTokenPayload extends JwtPayload {
@@ -32,7 +33,7 @@ export const protect: RequestHandler = async (req, res, next) => {
     return res.status(401).json({ message: "Not authorized" });
   }
 
-  if (!hasUserId(decoded) || !/^[a-f\d]{24}$/i.test(decoded.id)) {
+  if (!hasUserId(decoded) || !isUserId(decoded.id)) {
     return res.status(401).json({ message: "Not authorized" });
   }
 

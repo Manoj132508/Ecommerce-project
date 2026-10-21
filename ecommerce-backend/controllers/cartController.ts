@@ -4,16 +4,20 @@ import DeliveryOption from "../models/DeliveryOption.js";
 import Product from "../models/Product.js";
 import type { ErrorResponse, PaymentSummary } from "../types/api.js";
 import { errorMessage } from "../utils/errors.js";
+import { isDeliveryOptionId, isProductId } from "../utils/identifiers.js";
 
 type NoParams = Record<string, string>;
 type CartItemParams = { productId: string };
 
+// Request bodies are untrusted JSON; identifiers are checked with the guards
+// in utils/identifiers.ts before any query (R18).
 interface AddCartItemBody {
-  // Deliberately unknown and passed through unchanged: see MIGRATION_PLAN.md
-  // R18. Narrowing it to a string here would silently change behaviour.
   productId?: unknown;
   quantity?: unknown;
 }
+
+const invalidProductId: ErrorResponse = { message: "Invalid product id" };
+const invalidDeliveryOption: ErrorResponse = { message: "Invalid delivery option" };
 
 interface UpdateCartItemBody {
   quantity?: unknown;
@@ -58,27 +62,27 @@ export const addCartItem: RequestHandler<NoParams, unknown, AddCartItemBody> = a
       } satisfies ErrorResponse);
     }
 
+    if (!isProductId(productId)) {
+      return res.status(400).json(invalidProductId);
+    }
+
     const product = await Product.findById(productId);
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
     }
 
-    // where().equals() and new + save() are the typed forms of the original
-    // findOne({ productId }) and create(); they accept the unvalidated value
-    // unchanged, so behaviour (including R18) is identical.
-    let cartItem = await CartItem.findOne().where("productId").equals(productId);
+    let cartItem = await CartItem.findOne({ productId });
 
     if (cartItem) {
       cartItem.quantity += quantity;
       await cartItem.save();
     } else {
-      cartItem = new CartItem({
+      cartItem = await CartItem.create({
         productId,
         quantity,
         deliveryOptionId: "1"
       });
-      await cartItem.save();
     }
 
     return res.status(201).json(cartItem);
@@ -90,6 +94,10 @@ export const addCartItem: RequestHandler<NoParams, unknown, AddCartItemBody> = a
 // PUT /api/cart-items/:productId
 export const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartItemBody> = async (req, res) => {
   try {
+    if (!isProductId(req.params.productId)) {
+      return res.status(400).json(invalidProductId);
+    }
+
     const cartItem = await CartItem.findOne({
       productId: req.params.productId
     });
@@ -111,14 +119,17 @@ export const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartI
     }
 
     if (deliveryOptionId !== undefined) {
+      if (!isDeliveryOptionId(deliveryOptionId)) {
+        return res.status(400).json(invalidDeliveryOption);
+      }
+
       const deliveryOption = await DeliveryOption.findById(deliveryOptionId);
 
       if (!deliveryOption) {
-        return res.status(400).json({ message: "Invalid delivery option" } satisfies ErrorResponse);
+        return res.status(400).json(invalidDeliveryOption);
       }
 
-      // The request value as sent (cast by Mongoose), exactly like the original assignment.
-      cartItem.set("deliveryOptionId", deliveryOptionId);
+      cartItem.deliveryOptionId = deliveryOptionId;
     }
 
     await cartItem.save();
@@ -131,6 +142,10 @@ export const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartI
 // DELETE /api/cart-items/:productId
 export const deleteCartItem: RequestHandler<CartItemParams> = async (req, res) => {
   try {
+    if (!isProductId(req.params.productId)) {
+      return res.status(400).json(invalidProductId);
+    }
+
     const cartItem = await CartItem.findOne({
       productId: req.params.productId
     });

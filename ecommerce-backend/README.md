@@ -128,3 +128,8 @@ The suites are the regression baseline for the PostgreSQL migration
 orders and totals for all 16 API endpoints. `test/cart.shared-cart.current-flaw.test.js`
 documents the shared-cart security flaw as current behaviour only; the approved
 user-specific cart contract is listed there as `todo` tests.
+
+`test/injection.test.js` guards against MongoDB operator injection: every
+identifier taken from a request (product, order and delivery-option IDs) must
+be a string in its entity's format (`utils/identifiers.ts`), or the API answers
+400 before any database query.

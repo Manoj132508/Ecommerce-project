@@ -6,6 +6,7 @@ import Order, { type OrderDocument } from "../models/Order.js";
 import Product from "../models/Product.js";
 import type { CustomerDetails, ErrorResponse, ProductSnapshot } from "../types/api.js";
 import { errorMessage } from "../utils/errors.js";
+import { isOrderId } from "../utils/identifiers.js";
 
 type NoParams = Record<string, string>;
 type OrderParams = { orderId: string };
@@ -62,6 +63,11 @@ export const getOrders: RequestHandler<NoParams> = async (req, res) => {
 export const getOrder: RequestHandler<OrderParams> = async (req, res) => {
   try {
     const user = requireUser(req);
+
+    if (!isOrderId(req.params.orderId)) {
+      return res.status(400).json({ message: "Invalid order id" } satisfies ErrorResponse);
+    }
+
     const order = await Order.findById(req.params.orderId);
 
     if (
