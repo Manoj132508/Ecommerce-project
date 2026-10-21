@@ -20,7 +20,7 @@ export const getCartItems = async (req, res) => {
           };
         })
       );
-       console.log("Cart item:", cartWithProducts);
+       
       return res.json(cartWithProducts);
     }
 

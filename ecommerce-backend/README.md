@@ -55,6 +55,44 @@ and tokens belonging to deleted users, return 401. Server failures return 500.
 The existing product, cart, and order routes remain public; user-specific
 carts are separate work.
 
+## Local PostgreSQL 17 with Docker Compose
+
+PostgreSQL is added alongside MongoDB for a gradual migration. The API still
+uses MongoDB until individual features are deliberately migrated and tested.
+Nothing in this setup deletes or modifies MongoDB data.
+
+1. Install and start Docker Desktop, then verify `docker --version` and
+   `docker compose version` in a new PowerShell window.
+   On Windows, Docker Desktop may require the Virtual Machine Platform feature.
+   After enabling that feature, restart Windows before continuing.
+2. Run `npm.cmd run postgres:env`. This creates `.env.postgres` with a strong,
+   URL-safe random password and refuses to overwrite the file if it exists.
+3. Validate the resolved setup with `docker compose config`.
+4. Start the database with `docker compose up -d`.
+5. Wait for `docker compose ps` to show the `postgres` service as healthy.
+6. Confirm PostgreSQL itself with:
+
+   ```powershell
+   docker compose exec postgres psql -U ecommerce_app -d ecommerce -c "SELECT version(), current_database(), current_user;"
+   ```
+
+7. Confirm the Express-side `pg` connection with
+   `npm.cmd run postgres:check`.
+
+The named Docker volume `postgres_data` persists PostgreSQL data across normal
+container restarts and recreation. `docker compose down` keeps the volume;
+do not run `docker compose down -v` unless you intentionally want to delete the
+PostgreSQL data. The MongoDB database is separate and is never mounted or
+changed by this Compose file.
+
+Useful commands:
+
+```powershell
+docker compose logs -f postgres
+docker compose stop
+docker compose start
+```
+
 ## Tests
 
 Run `npm test`. The authentication tests use real HTTP requests and model

@@ -2,13 +2,32 @@ import DeliveryOption from "../models/DeliveryOption.js";
 import Product from "../models/Product.js";
 
 const getProductDetails = (body) => {
-  const { name, description, image, category } = body ?? {};
+  const {
+    name,
+    description,
+    howItWorks,
+    careInstructions,
+    image,
+    category
+  } = body ?? {};
   const price = Number(body?.price);
   const stock = Number(body?.stock);
+  const highlights = Array.isArray(body?.highlights)
+    ? body.highlights
+    : typeof body?.highlights === "string"
+      ? body.highlights.split(",")
+      : [];
+  const normalizedHighlights = highlights
+    .filter((highlight) => typeof highlight === "string")
+    .map((highlight) => highlight.trim())
+    .filter(Boolean);
 
   if (
     typeof name !== "string" || !name.trim() ||
     typeof description !== "string" || !description.trim() ||
+    typeof howItWorks !== "string" || !howItWorks.trim() ||
+    typeof careInstructions !== "string" || !careInstructions.trim() ||
+    normalizedHighlights.length === 0 ||
     typeof image !== "string" || !image.trim() ||
     typeof category !== "string" || !category.trim() ||
     !Number.isFinite(price) || price < 0 ||
@@ -20,6 +39,9 @@ const getProductDetails = (body) => {
   return {
     name: name.trim(),
     description: description.trim(),
+    howItWorks: howItWorks.trim(),
+    highlights: normalizedHighlights,
+    careInstructions: careInstructions.trim(),
     image: image.trim(),
     category: category.trim(),
     stock,
@@ -34,7 +56,7 @@ export const getProducts = async (req, res) => {
     const products = await Product.find().sort({ createdAt: 1 });
      
     res.json(products);
-    console.log(products);
+    
    
   } catch (error) {
     res.status(500).json({ message: error.message });
