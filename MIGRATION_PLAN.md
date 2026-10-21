@@ -1,8 +1,8 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–2, R18 and R20 committed and pushed. Phase 3A (PostgreSQL schema and migrations) complete locally, awaiting approval before any data transfer. MongoDB is still the only application database. Owner-gated: 0.5, 0.6, 1.7, production deploy, Phase 3 decisions. D1–D4 approved 2026-10-21.**
+Status: **Phases 0–2, R18, R20 and 3A committed and pushed. Phase 3B (MongoDB → PostgreSQL copy-and-verify tooling) complete locally and awaiting review. MongoDB is still the only application database; no API route uses PostgreSQL. No production database was touched. D1–D4 approved; Phase 3B decisions approved 2026-10-21.**
 
-> **Production blocker (updated 2026-10-21):** the owner confirmed the backend is hosted on **Render**. The production **database** location (MongoDB host) and Render's build/start settings still can't be identified from the repository. There are no deploy config files (`render.yaml`, `Procfile`, `vercel.json`, Dockerfile, CI workflows) and no host or Atlas references. The frontend's `VITE_API_URL` lives in Vercel project settings, outside the repo. Until the owner supplies the host, its build/start commands and the database location, nobody can back up the production DB, re-check the 1.4 backfills there, or deploy anything after Phase 1. Phase 2 also changes the start command (R21).
+> **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
 
 Target stack:
@@ -230,9 +230,11 @@ Field-level conversions:
 | R16 | Product `PUT` replaces `keywords` with `[category]`, discarding seeded keywords used by client-side search | Low | Pinned in `products.test.js`; **decided: FD3** (keep keywords unless explicitly updated) |
 | R17 | Mongoose deprecation: `findByIdAndUpdate(..., { new: true })` (productController) warns under Mongoose 9 | Low | Code is replaced in Phase 4.2; no change now |
 | R18 | **NoSQL operator injection (found in Phase 2 by the type checker).** `POST /api/cart-items` passed `productId` from the body to `findById`/`findOne` unvalidated: `{"productId":{"$ne":null}}` incremented an arbitrary existing cart line, or returned a 500 leaking the cast error. `PUT /api/cart-items/:id` with an operator-object `deliveryOptionId` passed the lookup, then failed as a leaking 500 | ~~High~~ **Fixed** (R18 commit) | Strict per-entity identifier guards (`utils/identifiers.ts`, see §2 "Identifier contract") reject objects, arrays, non-strings and malformed IDs with 400 before any query. All request inputs reaching Mongoose were inventoried; the others were already validated. `test/injection.test.js` (68 tests): `$ne`/`$gt`/`$regex`/`$where`/`$in`/`$exists`, nested objects, arrays, numbers, booleans, null, malformed and URL-encoded strings. Each asserts the exact 400, unchanged data and **no Mongoose call**. Against the vulnerable code it fails 57/68 (the 11 passes are positive controls). **Pre-deploy check:** run the read-only ID-format profile on production data (blocked by 0.6); any non-UUID product/order IDs there would now get 400s. Postgres parameterised SQL removes the class entirely in Phase 4 |
-| R19 | `config/postgres.ts` finds `.env.postgres` relative to its own file (`../.env.postgres`). From `dist/config/` that points at `dist/.env.postgres` | Low | Harmless today: only `tsx` scripts import it. Fix in Phase 3.1 before the server imports the pool (resolve from the package root, or rely on real env vars in production) |
+| R19 | `config/postgres.ts` found `.env.postgres` relative to its own file, so it missed the file from `dist/config/` | ~~Low~~ **Fixed (Phase 3B)** | It now checks the package root from both `config/` and `dist/config/`; real environment variables still take precedence (Render) |
 | R20 | `npm audit`: 5 advisories (1 critical, 2 high, 2 moderate), all in **Express 4.21.2's own dependency tree** (proxy-addr, path-to-regexp, qs, body-parser). Pre-existing on `main`, not introduced by Phase 2 | ~~High~~ **Fixed** (R20 commit) | Express `^4.21.2` → **`^4.22.3`** (the `latest-4` tag; no major upgrade, Express 5 not adopted). Transitive: body-parser 1.20.8, qs 6.16.1, path-to-regexp 0.1.13, proxy-addr 2.0.8, raw-body 2.5.3. `npm audit`: **0 vulnerabilities** (all deps and `--omit=dev`). Compatibility: 173 tests green, plus 48/48 identical responses between Express 4.21.2 and 4.22.3 on the dev DB with `NODE_ENV=production`. That covers real data, query-string edge cases (objects, arrays, duplicates, 30-element arrays), malformed JSON, R18 rejections, CORS allow/deny/preflight and the default 404/500 pages. Note: `main` and `pre-pg-migration` still have Express 4.21.2 |
 | R21 | **Phase 2 changes how the backend starts.** `server.js` no longer exists; production must run `npm ci` (with dev dependencies) → `npm run build` → `npm start` (`node dist/server.js`). A host still running `node server.js`, or installing with `--omit=dev`, fails to start | **High (deploy blocker)** | Nothing deployed. Before deploying `migration/postgres`, update the backend host's build command to `npm ci && npm run build` and the start command to `npm start`. Rollback: redeploy `main` or `pre-pg-migration`, which still use `node server.js` |
+| R22 | **Windows PowerShell corrupts binary output redirected with `>`** (found in Phase 3B: a `pg_dump > file` gained a UTF-8 BOM and was unrestorable) | ~~High~~ **Mitigated** | `db/README.md` documents only in-container `pg_dump -f` + `docker compose cp` (and `-f` for hosted databases). Every documented command was executed and the dump restored. The corrupt file was deleted |
+| R23 | Extraction reads collection by collection, not as one snapshot; writes to a live production MongoDB during an import could produce an inconsistent copy | Medium | Production import only inside an agreed write freeze. Verification compares field by field and flags a changed source fingerprint (Phase 3B decision 4) |
 
 ### Approved decisions (2026-10-21)
 
@@ -364,32 +366,97 @@ Behaviour changes: **none in API responses.** Internal-only differences:
 - [x] 3A.4 `npm run test:db`: **73 tests** (16 runner + 57 schema) against a throwaway `postgres:17-alpine` container (random port on 127.0.0.1, random credentials, a fresh database per test, removed afterwards; never the compose database). Mutation check: weakening the quantity range, the immutability trigger, D3 (adding a product FK) and the new-order rule made exactly the 4 matching tests fail
 - [x] 3A.5 Local dev Postgres (empty): backed up, then `db:migrate` applied 0001 (72 ms). A second run was a no-op and `db:status` shows it applied. Rollback without `--confirm` refuses. The documented backup and restore commands were executed and verified
 - [x] 3A.6 `db/README.md`: schema design, commands, safety rules, backup, restore and rollback
-- [ ] 3A.7 Owner decisions before 3B: see "Outstanding decisions (Phase 3)" below
+- [x] 3A.7 Owner decisions before 3B: answered 2026-10-21 (see "Phase 3B decisions" below)
 
-Remaining Phase 3 work (3B onwards, not started):
+**Phase 3B (copy-and-verify tooling): complete locally, awaiting review.** MongoDB remains the only application database; nothing runs at API start-up; no production database was touched.
+
+- [x] 3B.1 **Migration 0002** (`order_history_protection`):
+  - `set_updated_at` keeps an explicitly supplied `updated_at`, so imports preserve source timestamps.
+  - `orders.status` / `status_updated_at`, with an `order_status_transitions` table (placed → processing | cancelled; processing → shipped | cancelled; shipped → delivered).
+  - Financial columns immutable (UPDATE rejected); row DELETEs on `orders` and `order_items` rejected.
+  - `data_import_runs` audit table.
+- [x] 3B.2 Read-only extraction (`db/dataMigration/source.ts`): only `listCollections`/`find`, `_id` order, SHA-256 fingerprint of the canonical Extended JSON. Connection guard refuses non-local hosts unless `--allow-remote-source`/`--allow-remote-target` is passed.
+- [x] 3B.3 Validation and mapping (`db/dataMigration/plan.ts`, no I/O). It reports invalid ids, missing references, duplicate keys, missing ownership, orphaned orders, missing snapshots, deleted-product references, unknown fields and collections, and schema incompatibilities. Defaults are limited to Mongoose model defaults and each use is counted. Nothing is coerced or invented.
+- [x] 3B.4 Import (`db/dataMigration/importer.ts`):
+  - One transaction under an advisory lock; parameterised SQL in batches.
+  - Dependency order: delivery options → products → users → orders + lines.
+  - Change-detecting upserts for reference data; insert-or-compare for orders (history never updated; a difference is a conflict).
+  - Strict by default (any error blocks before writing); `--skip-invalid` is opt-in.
+  - Shared cart excluded and counted.
+  - Requires all schema migrations to be applied.
+- [x] 3B.5 Verification (`db/dataMigration/verify.ts`): an independent field-by-field mapping from the raw MongoDB documents. It reports matched, mismatched (field names only), missing and unexpected rows, cart exclusion, and source changes since the last import.
+- [x] 3B.6 Guarded rollback (`data:rollback --confirm`): TRUNCATE in one transaction. It refuses if any cart, non-legacy order, or row not created by a recorded import exists.
+- [x] 3B.7 Reports: JSON with ids and counts only (no personal data or credentials), written to git-ignored `migration-reports/`; console summary; non-zero exit unless succeeded.
+- [x] 3B.8 Build: the runner and data CLI compile to `dist/scripts/`; `npm run build` copies the SQL to `dist/db/migrations`. The server imports neither.
+- [x] 3B.9 Tests (`npm run test:db`, isolated PostgreSQL container plus in-memory MongoDB): **120 tests** (16 runner + 75 schema + 29 data migration). They cover dry-run, exact import, re-run, source change, deleted products, deleted users, malformed ids, duplicates, `--skip-invalid`, partial failure, order conflict, unmigrated schema, concurrent imports, verification drift, guarded rollback, MongoDB `dbHash` unchanged, and the connection guard. Mutation check: writing `created_at` into `ordered_at` makes 8 tests fail through the independent verifier.
+- [x] 3B.10 Local development run, all **local** databases (2026-10-21):
+  - Dev PostgreSQL backed up first, then `db:migrate` applied 0002.
+  - `data:dry-run`: 0 errors.
+  - `node dist/scripts/dataMigrate.js import`: inserted **3 delivery options, 35 products, 1 user, 8 orders (19 lines)**; excluded **4 shared-cart items** (quantity 5, 4 products) and the empty `delivery Options` collection.
+  - Verification **MATCH (47/47 records)**. A re-run had 0 inserted, 0 updated and 47 unchanged.
+  - MongoDB `dbHash` unchanged (`53733060…`).
+  - Findings: 6 orders without an owner, 0 orphaned, 19 lines without a snapshot (kept NULL), 16 lines referencing deleted products, and `products.stock` model default applied ×35.
+- [x] 3B.11 `db/README.md`: exact Windows PowerShell commands, data-copy procedure, report format, safety rules, backup/restore and rollback. **All commands were executed as documented.**
+
+#### Phase 3B decisions (owner, 2026-10-21)
+
+- Keep MongoDB ObjectId user ids as TEXT; keep product/order UUIDs and delivery-option digit strings.
+- Orders of deleted users: import with NULL ownership and list them in the audit report (`orphanedOrders`, with the original user id).
+- The 4 shared-cart items are not assigned to anyone: excluded from PostgreSQL, counted in every report, preserved in MongoDB and the backups.
+- Preserve historical order information without inventing snapshots.
+- Completed-order financial history is protected against editing; only controlled status transitions are allowed (migration 0002).
+- Data migration is a separate, explicit command, never run at API start-up.
+- Production PostgreSQL: preferably managed **Render Postgres in the backend's region**. Compile the runner into the build; don't run it automatically.
+
+
+Remaining Phase 3 work (not started; Phase 3C / Phase 4 preparation):
 
 - [ ] 3.1 `db/pool.ts` (typed wrapper over `config/postgres.ts`; `withTransaction(fn)` helper; fixes R19)
 - [x] 3.2 ~~`db/migrations/001_init.sql` + runner~~ Done in Phase 3A
 - [ ] 3.3 Repository interfaces per domain (`ProductRepo`, `DeliveryOptionRepo`, `UserRepo`, `CartRepo`, `OrderRepo`) with a Mongo implementation (wrapping current Mongoose code) and a Postgres implementation (parameterised SQL only — no string-built SQL, ever)
 - [ ] 3.4 Per-domain switch `DATA_SOURCE_<DOMAIN>=mongo|postgres` (default `mongo`)
-- [ ] 3.5 `scripts/etl/mongoToPostgres.ts`: reads Mongo read-only, upserts into Postgres in one transaction per collection (`ON CONFLICT (id) DO UPDATE`), copies user ObjectId hex strings verbatim (D2), sets `is_legacy = true` on order lines without a snapshot (D4), converts ms → timestamptz, flattens rating/customer, explodes order products with `position`; idempotent and re-runnable
-- [ ] 3.6 `scripts/etl/verify.ts`: row counts per table = doc counts; per-row checksum of key fields; every `orders.user_id` resolves; every product price/rating equal; prints a diff and exits non-zero on mismatch
+- [x] 3.5 ~~ETL script~~ Done in Phase 3B (`data:import`, `db/dataMigration/`)
+- [x] 3.6 ~~verify script~~ Done in Phase 3B (`data:verify`)
 - [ ] 3.7 Run the characterisation suite against each Postgres repo implementation
 
 **Acceptance:** `db:migrate` creates the schema on an empty DB and is a no-op on rerun (**met in 3A**); ETL + verify exit 0 twice in a row; characterisation suite passes with every `DATA_SOURCE_*=postgres`.
 **Rollback:** nothing user-facing changed; `npm run db:rollback -- --confirm` or restore the pre-migration `pg_dump` (`db/README.md`).
 
-#### Outstanding decisions (Phase 3)
+#### Outstanding decisions (after Phase 3B)
 
-These need owner input before data transfer (3.5) or production use. None blocks reviewing Phase 3A.
+1. **Production MongoDB provider and location.** Still unknown; must be verified before any production backup, profile or import. Use a read-only MongoDB user for the import.
+2. **Render Postgres instance.** Plan, region (same as the backend), PostgreSQL **17** (the tested version), backup retention. Not created yet.
+3. **Production data profile.** Run `data:dry-run` against production only after decisions 1–2, from an approved environment, with `--allow-remote-source`. Any validation error needs a data decision **before** import; the tool won't coerce.
+4. **Write freeze for the production import.** Extraction isn't a single snapshot; agree a maintenance window, then compare the import's fingerprint with a fresh `data:verify`.
+5. **Legacy order statuses.** Legacy orders have no status and can't be given one. Should the admin ever be able to mark a legacy order (for example "delivered")? That would need an explicit rule, never an automatic backfill.
+6. **Cancellation and refunds.** `cancelled` exists as an operational status only. Refunds and money movements are out of scope and must never edit the immutable financial columns.
+7. **Mapping notes for the repositories (no decision needed).** `pg` returns `numeric` as a string (convert `rating_stars`). Constraint names map to API errors (unique email → 409, quantity range → 400, missing delivery option → 400). New orders insert `status = 'placed'`.
 
-1. **Production database location.** The backend is on **Render** (owner, 2026-10-21), but the production MongoDB host (Atlas or other) and the target PostgreSQL (Render Postgres? which plan, region, version) are unknown. The schema is tested on PostgreSQL 17; the production engine should match.
-2. **How production migrations run.** The runner runs from source through `tsx` (a dev dependency) and isn't in `dist/`. Options: (a) a Render pre-deploy command `npm run db:migrate` with dev dependencies installed; (b) compile the runner into `dist/` and run `node dist/scripts/dbMigrate.js`. Also needed: who takes the pre-migration `pg_dump`, and when.
-3. **Production data must fit the constraints.** Before ETL, run the §3.1 read-only profile on production MongoDB. In particular: product/order ids are UUIDs, user ids are ObjectIds, emails are normalised, ratings are half steps, money and quantities are whole numbers, and customer details are all-or-nothing. Any mismatch needs a cleaning rule decided **before** transfer. The ETL must fail, never silently coerce.
-4. **Dangling user references in legacy orders.** There are none locally. If production orders reference deleted users, the RESTRICT foreign key rejects them. Options: import as `is_legacy` with `user_id` NULL (loses the link), or recreate placeholder users (invents data, against D4). Recommendation: NULL plus an ETL report.
-5. **The existing shared-cart lines** (4 locally) are **not migrated** (D1). Confirm they're discarded at cut-over; they remain in the MongoDB backups.
-6. **Should `orders` rows also be immutable?** Today only `order_items` is (D4). Making `orders` read-only would also block legitimate future status fields. Recommendation: decide when order statuses are designed.
-7. **Mapping notes for 3B (no decision needed, recorded for implementation).** `pg` returns `numeric` (`rating_stars`) as a string, so the repository converts it to `Number`. Constraint names map to the existing API errors: a unique email to 409, the quantity range to 400, a missing delivery option to 400 "Invalid delivery option".
+
+#### Render deployment preparation (documented only, not applied)
+
+Nothing below has been changed on Render. Apply it only with approval, in the stated order.
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Root directory | `ecommerce-backend` | Monorepo layout unchanged until Phase 7 |
+| Node version | 24 (`NODE_VERSION=24` or `engines`) | Matches local development and `@types/node` |
+| Build command | `npm ci --include=dev && npm run build` | TypeScript is a dev dependency. With `NODE_ENV=production`, a plain `npm ci` would omit it and the build would fail (R21) |
+| Start command | `npm start` (`node dist/server.js`) | `server.js` no longer exists at the package root (R21) |
+| Pre-deploy command | **Leave empty for now.** From Phase 4: `node dist/scripts/dbMigrate.js up` | Schema migrations are explicit and repeatable; they never run inside the server process |
+| Health check path | `/` | Returns "Ecommerce API is running" |
+| Environment (unchanged) | `MONGODB_URI`, `JWT_SECRET`, `CLIENT_URL`, `NODE_ENV=production` | MongoDB stays the application database |
+| `DATABASE_URL` | **Do not add until Phase 4.** Then: the Render Postgres *internal* connection string | Nothing reads PostgreSQL in production yet |
+
+One-off production data copy (Phase 4 only, after decisions 1–4), run from a Render Shell or one-off job of the deployed build:
+
+1. Back up production MongoDB (§7) and confirm the Render Postgres backup.
+2. `node dist/scripts/dbMigrate.js up`
+3. `node dist/scripts/dataMigrate.js dry-run --allow-remote-source`. Review the report; it must show 0 errors.
+4. Start the write freeze. Then `node dist/scripts/dataMigrate.js import --allow-remote-source --allow-remote-target`.
+5. `node dist/scripts/dataMigrate.js verify --allow-remote-source --allow-remote-target`. It must report MATCH.
+
+Rollback for any step: no API reads PostgreSQL until Phase 4 switches a domain, so the safe default is to do nothing. Production keeps serving from MongoDB. To discard imported data: `node dist/scripts/dataMigrate.js rollback --confirm --allow-remote-target`, or restore the Render Postgres backup.
 
 ### Phase 4 — Cut over domain by domain (lowest risk first)
 
@@ -526,9 +593,8 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Pushed to `origin/migration/postgres`: Phase 1 (`ced0ff8`), Phase 2 (`512f759`), R18 (`fd6b6e1`) and R20 (`35c4a46`). Phase 3A is complete locally. **Data transfer waits for owner approval.**
+Pushed to `origin/migration/postgres`: Phase 1 (`ced0ff8`), Phase 2 (`512f759`), R18 (`fd6b6e1`), R20 (`35c4a46`), Phase 3A (`b7ae2b0`). Phase 3B is complete locally and awaiting review. **No API cut-over, Next.js work or deployment has started.**
 
-1. Owner: review Phase 3A (`db/README.md`, migration 0001) and approve committing/pushing it.
-2. Owner: answer the Phase 3 outstanding decisions (§6, Phase 3), especially the production database location (1) and how migrations run on Render (2).
-3. Owner: resolve the production blocker (0.6): back up the production DB (§7), run the read-only data profile there (decision 3), and apply the R21 build/start commands before any deploy.
-4. Then Phase 3B: `db/pool.ts`, repositories behind `DATA_SOURCE_*` switches, ETL and verification. MongoDB stays authoritative until Phase 4.
+1. Owner: review Phase 3B (migration 0002, `db/dataMigration/`, `db/README.md`) and approve committing and pushing it.
+2. Owner: answer the outstanding decisions after Phase 3B, above all the production MongoDB provider (1) and the Render Postgres instance (2).
+3. Then Phase 3C / Phase 4 preparation: `db/pool.ts` and the repositories behind `DATA_SOURCE_*` switches, with the characterisation suite run against PostgreSQL. MongoDB stays authoritative until each domain is switched.

@@ -16,3 +16,6 @@
 
 # Local recovery material is not part of the deployable application
 _recovery_backup_pre_restore_*/
+
+# Data migration reports (record ids and counts; kept out of git)
+**/migration-reports/

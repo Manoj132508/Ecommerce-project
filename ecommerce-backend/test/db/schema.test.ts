@@ -63,6 +63,8 @@ interface OrderRow {
   customer?: (string | null)[];
   // unknown: tests also send invalid values such as -1 and 10.5.
   totalCostCents?: unknown;
+  // Defaults to "placed" for application orders and none for legacy ones (0002).
+  status?: string | null;
 }
 
 const insertOrder = ({
@@ -71,11 +73,13 @@ const insertOrder = ({
   userId = USER_ID,
   customer = CUSTOMER,
   totalCostCents = 5801,
+  status = isLegacy ? null : "placed",
 }: OrderRow = {}) => sql(
   `INSERT INTO orders (id, is_legacy, user_id, customer_full_name, customer_email, customer_phone,
-     customer_address, customer_city, customer_postal_code, customer_country, ordered_at, total_cost_cents)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-  [id, isLegacy, userId, ...customer, new Date(1_790_167_054_005), totalCostCents],
+     customer_address, customer_city, customer_postal_code, customer_country, ordered_at, total_cost_cents,
+     status, status_updated_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CASE WHEN $13::text IS NULL THEN NULL ELSE now() END)`,
+  [id, isLegacy, userId, ...customer, new Date(1_790_167_054_005), totalCostCents, status],
 );
 
 const SNAPSHOT = ["Socks", "images/products/socks.jpg", 1090, "Comfortable socks.", "Clothing"];
@@ -392,12 +396,144 @@ describe("order_items (D4 snapshots and immutability)", () => {
     await insertOrderItem({ quantity: 16 });
   });
 
-  test("line positions are unique per order and deleting an order removes its lines", async () => {
+  test("line positions are unique per order", async () => {
     await insertOrderItem();
     await expectSqlState(insertOrderItem(), SQLSTATE.uniqueViolation, "order_items_pkey");
     await insertOrderItem({ position: 1, productId: OTHER_PRODUCT_ID });
-    await sql("DELETE FROM orders WHERE id = $1", [ORDER_ID]);
-    const { rows } = await sql("SELECT count(*)::int AS lines FROM order_items");
-    expect(rows).toEqual([{ lines: 0 }]);
+  });
+});
+
+describe("order status and financial history (0002)", () => {
+  const LEGACY_ORDER_ID = "0e4111b0-cf69-448b-a3d1-ca2f5d6ba563";
+
+  const status = async (id = ORDER_ID) => (
+    await db.pool.query<{ status: string | null; status_updated_at: Date | null }>(
+      "SELECT status, status_updated_at FROM orders WHERE id = $1", [id],
+    )
+  ).rows[0];
+
+  const setStatus = (to: string | null, id = ORDER_ID) => sql("UPDATE orders SET status = $2 WHERE id = $1", [id, to]);
+
+  beforeEach(async () => {
+    await insertUser();
+    await insertOrder();
+    await insertOrder({ id: LEGACY_ORDER_ID, isLegacy: true, userId: null, customer: [null, null, null, null, null, null, null] });
+    await insertOrderItem();
+  });
+
+  test("application orders must have a known status with its timestamp", async () => {
+    await expectSqlState(
+      insertOrder({ id: OTHER_PRODUCT_ID, status: null }), SQLSTATE.checkViolation, "orders_new_order_has_status",
+    );
+    await expectSqlState(insertOrder({ id: OTHER_PRODUCT_ID, status: "lost" }), SQLSTATE.checkViolation, "orders_status_known");
+    await expectSqlState(
+      sql(
+        `INSERT INTO orders (id, is_legacy, ordered_at, total_cost_cents, status, status_updated_at)
+         VALUES ($1, true, now(), 0, NULL, now())`,
+        [OTHER_PRODUCT_ID],
+      ),
+      SQLSTATE.checkViolation, "orders_status_timestamp_together",
+    );
+  });
+
+  test("follows the allowed path placed -> processing -> shipped -> delivered, stamping each change", async () => {
+    const placed = await status();
+    expect(placed?.status).toBe("placed");
+    for (const next of ["processing", "shipped", "delivered"]) {
+      await setStatus(next);
+      const current = await status();
+      expect(current?.status).toBe(next);
+      expect(current?.status_updated_at?.getTime()).toBeGreaterThanOrEqual(placed?.status_updated_at?.getTime() ?? Infinity);
+    }
+  });
+
+  test.each([
+    ["placed", "cancelled", true],
+    ["placed", "shipped", false],
+    ["placed", "delivered", false],
+    ["placed", null, false],
+  ])("transition %s -> %s allowed: %s", async (_from, to, allowed) => {
+    if (allowed) {
+      await setStatus(to);
+      expect((await status())?.status).toBe(to);
+    } else {
+      await expect(setStatus(to)).rejects.toMatchObject({
+        code: SQLSTATE.checkViolation,
+        message: `order status transition placed -> ${to ?? "none"} is not allowed`,
+      });
+    }
+  });
+
+  test("terminal states cannot move again", async () => {
+    await setStatus("cancelled");
+    await expectSqlState(setStatus("processing"), SQLSTATE.checkViolation);
+    await setStatus("delivered").catch(() => {});
+    expect((await status())?.status).toBe("cancelled");
+  });
+
+  test("legacy orders keep no invented status and cannot be given one", async () => {
+    expect(await status(LEGACY_ORDER_ID)).toEqual({ status: null, status_updated_at: null });
+    await expect(setStatus("delivered", LEGACY_ORDER_ID)).rejects.toMatchObject({
+      message: "order status transition none -> delivered is not allowed",
+    });
+  });
+
+  test("status_updated_at cannot be edited without a status change", async () => {
+    const before = await status();
+    await sql("UPDATE orders SET status_updated_at = '2000-01-01' WHERE id = $1", [ORDER_ID]);
+    expect(await status()).toEqual(before);
+  });
+
+  test.each([
+    ["total_cost_cents = 1"],
+    ["customer_email = 'changed@example.com'"],
+    ["user_id = NULL"],
+    ["ordered_at = now()"],
+    ["is_legacy = true"],
+    ["created_at = now()"],
+  ])("financial history is immutable: SET %s is rejected", async (change) => {
+    await expect(sql(`UPDATE orders SET ${change} WHERE id = $1`, [ORDER_ID])).rejects.toMatchObject({
+      code: SQLSTATE.restrictViolation,
+      message: "order financial history is immutable",
+    });
+  });
+
+  test("orders and their lines cannot be deleted row by row; TRUNCATE (controlled rollback) still works", async () => {
+    await expect(sql("DELETE FROM order_items")).rejects.toMatchObject({
+      code: SQLSTATE.restrictViolation, message: "order_items rows cannot be deleted",
+    });
+    await expect(sql("DELETE FROM orders WHERE id = $1", [ORDER_ID])).rejects.toMatchObject({
+      code: SQLSTATE.restrictViolation, message: "orders rows cannot be deleted",
+    });
+    await sql("TRUNCATE order_items, orders");
+    const { rows } = await sql("SELECT (SELECT count(*) FROM orders)::int AS orders, (SELECT count(*) FROM order_items)::int AS lines");
+    expect(rows).toEqual([{ orders: 0, lines: 0 }]);
+  });
+});
+
+describe("timestamps and import audit (0002)", () => {
+  test("an explicitly supplied updated_at is kept; otherwise updates stamp now()", async () => {
+    await sql(
+      `INSERT INTO delivery_options (id, delivery_days, price_cents, created_at, updated_at)
+       VALUES ('1', 7, 0, '2024-06-10T10:00:00.123Z', '2024-06-10T10:00:00.123Z')`,
+    );
+    await sql("UPDATE delivery_options SET price_cents = 5, updated_at = '2024-06-11T09:30:00.456Z'");
+    const kept = await db.pool.query<{ updated_at: Date }>("SELECT updated_at FROM delivery_options");
+    expect(kept.rows[0]?.updated_at.toISOString()).toBe("2024-06-11T09:30:00.456Z");
+
+    await sql("UPDATE delivery_options SET price_cents = 6");
+    const stamped = await db.pool.query<{ updated_at: Date }>("SELECT updated_at FROM delivery_options");
+    expect(stamped.rows[0]?.updated_at.getUTCFullYear()).toBeGreaterThan(2024);
+  });
+
+  test("data_import_runs accepts only known operations and outcomes", async () => {
+    const insertRun = (operation: string, outcome: string) => sql(
+      `INSERT INTO data_import_runs (operation, outcome, started_at, finished_at, summary)
+       VALUES ($1, $2, now(), now(), '{}')`,
+      [operation, outcome],
+    );
+    await insertRun("import", "succeeded");
+    await expectSqlState(insertRun("delete", "succeeded"), SQLSTATE.checkViolation, "data_import_runs_operation_known");
+    await expectSqlState(insertRun("import", "partial"), SQLSTATE.checkViolation, "data_import_runs_outcome_known");
   });
 });

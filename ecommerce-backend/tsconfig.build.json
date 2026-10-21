@@ -1,6 +1,10 @@
 {
-  // Production build: compiles only the files the API server needs into dist/.
-  // Tests and one-off scripts are type-checked by tsconfig.json but not shipped.
+  // Production build: compiles the API server plus the explicit, operator-run
+  // database commands (schema migrations and the MongoDB -> PostgreSQL copy)
+  // into dist/. The build script also copies db/migrations/*.sql to
+  // dist/db/migrations. server.ts never imports the database commands, so
+  // nothing runs automatically at start-up. Tests and the remaining one-off
+  // scripts are type-checked by tsconfig.json but not shipped.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
@@ -12,11 +16,14 @@
     "server.ts",
     "config/**/*.ts",
     "controllers/**/*.ts",
+    "db/**/*.ts",
     "middleware/**/*.ts",
     "models/**/*.ts",
     "routes/**/*.ts",
     "types/**/*.ts",
-    "utils/**/*.ts"
+    "utils/**/*.ts",
+    "scripts/dbMigrate.ts",
+    "scripts/dataMigrate.ts"
   ],
-  "exclude": ["node_modules", "dist", "test", "scripts"]
+  "exclude": ["node_modules", "dist", "test"]
 }

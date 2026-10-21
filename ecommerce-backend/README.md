@@ -19,9 +19,12 @@ All environment variables are documented in `types/environment.d.ts`.
 | `npm test` | Runs the Vitest suites (see Tests) |
 | `npm run test:db` | Runs the PostgreSQL migration tests in a throwaway Docker container |
 | `npm run db:migrate` / `db:status` / `db:rollback -- --confirm` | Manages the PostgreSQL schema (see [`db/README.md`](db/README.md)) |
+| `npm run data:dry-run` / `data:import` / `data:verify` / `data:rollback -- --confirm` | Copies MongoDB data to PostgreSQL and verifies it (see [`db/README.md`](db/README.md)) |
 
-PostgreSQL schema and migrations live in `db/` (Phase 3A of
-`MIGRATION_PLAN.md`). The application still reads and writes **MongoDB only**.
+PostgreSQL schema, migrations and the MongoDB → PostgreSQL copy tooling live in
+`db/` (Phases 3A–3B of `MIGRATION_PLAN.md`). They run only when invoked
+explicitly, never at server start-up. The application still reads and writes
+**MongoDB only**.
 
 The build needs the dev dependencies (`typescript`), so a deployment must
 install them, run `npm run build`, then `npm start`. `dist/` is git-ignored.
