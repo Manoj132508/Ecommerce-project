@@ -1,0 +1,257 @@
+// Migration runner behaviour against real, isolated PostgreSQL databases.
+import { readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import {
+  checksumOf,
+  loadMigrations,
+  migrate,
+  MigrationError,
+  migrationStatus,
+  rollbackLatest,
+} from "../../db/migrator.js";
+import { copyMigrations, createTestDatabase, MIGRATIONS_DIRECTORY, type TestDatabase } from "./helpers.js";
+
+const SCHEMA_TABLES = [
+  "cart_items",
+  "carts",
+  "delivery_options",
+  "order_items",
+  "orders",
+  "products",
+  "schema_migrations",
+  "users",
+];
+
+const SCHEMA_FUNCTIONS = ["order_items_reject_update", "order_items_require_snapshot", "set_updated_at"];
+
+let db: TestDatabase;
+
+beforeEach(async () => {
+  db = await createTestDatabase();
+});
+
+afterEach(async () => {
+  await db.drop();
+});
+
+const tables = async () => (await db.pool.query<{ table_name: string }>(
+  "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+)).rows.map((row) => row.table_name);
+
+const functions = async () => (await db.pool.query<{ proname: string }>(
+  `SELECT proname FROM pg_proc WHERE pronamespace = 'public'::regnamespace ORDER BY proname`,
+)).rows.map((row) => row.proname);
+
+const history = async () => (await db.pool.query<{ version: string; name: string; checksum: string; applied_at: Date }>(
+  "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version",
+)).rows;
+
+describe("fresh database", () => {
+  test("starts empty, then gets every table, function and a history row", async () => {
+    expect(await tables()).toEqual([]);
+
+    const result = await migrate(db.pool, MIGRATIONS_DIRECTORY);
+
+    expect(result).toEqual({ applied: ["0001"], alreadyApplied: [] });
+    expect(await tables()).toEqual(SCHEMA_TABLES);
+    expect(await functions()).toEqual(SCHEMA_FUNCTIONS);
+    const upSql = await readFile(path.join(MIGRATIONS_DIRECTORY, "0001_initial_schema.up.sql"), "utf8");
+    expect(await history()).toEqual([
+      expect.objectContaining({ version: "0001", name: "initial_schema", checksum: checksumOf(upSql) }),
+    ]);
+  });
+
+  test("creates the expected indexes and constraints", async () => {
+    await migrate(db.pool, MIGRATIONS_DIRECTORY);
+
+    const indexes = (await db.pool.query<{ indexname: string }>(
+      "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname",
+    )).rows.map((row) => row.indexname);
+    expect(indexes).toEqual(expect.arrayContaining([
+      "cart_items_cart_id_created_at_idx",
+      "cart_items_cart_id_product_id_key",
+      "carts_user_id_key",
+      "order_items_pkey",
+      "orders_ordered_at_idx",
+      "orders_user_id_ordered_at_idx",
+      "products_created_at_id_idx",
+      "users_email_key",
+    ]));
+
+    const foreignKeys = (await db.pool.query<{ conname: string; confdeltype: string }>(
+      "SELECT conname, confdeltype FROM pg_constraint WHERE contype = 'f' AND connamespace = 'public'::regnamespace ORDER BY conname",
+    )).rows;
+    // a = no action, c = cascade, r = restrict
+    expect(foreignKeys).toEqual([
+      { conname: "cart_items_cart_id_fkey", confdeltype: "c" },
+      { conname: "cart_items_delivery_option_id_fkey", confdeltype: "r" },
+      { conname: "carts_user_id_fkey", confdeltype: "c" },
+      { conname: "order_items_order_id_fkey", confdeltype: "c" },
+      { conname: "orders_user_id_fkey", confdeltype: "r" },
+    ]);
+  });
+
+  test("money columns are integer minor units and quantities are integers", async () => {
+    await migrate(db.pool, MIGRATIONS_DIRECTORY);
+    const columns = (await db.pool.query<{ table_name: string; column_name: string; data_type: string }>(
+      `SELECT table_name, column_name, data_type FROM information_schema.columns
+        WHERE table_schema = 'public' AND (column_name LIKE '%cents' OR column_name = 'quantity')
+        ORDER BY table_name, column_name`,
+    )).rows;
+    expect(columns).toEqual([
+      { table_name: "cart_items", column_name: "quantity", data_type: "integer" },
+      { table_name: "delivery_options", column_name: "price_cents", data_type: "integer" },
+      { table_name: "order_items", column_name: "quantity", data_type: "integer" },
+      { table_name: "order_items", column_name: "snapshot_price_cents", data_type: "integer" },
+      { table_name: "orders", column_name: "total_cost_cents", data_type: "integer" },
+      { table_name: "products", column_name: "price_cents", data_type: "integer" },
+    ]);
+  });
+});
+
+describe("repeated and concurrent runs", () => {
+  test("running again applies nothing and leaves history untouched", async () => {
+    await migrate(db.pool, MIGRATIONS_DIRECTORY);
+    const before = await history();
+
+    for (let run = 0; run < 3; run += 1) {
+      expect(await migrate(db.pool, MIGRATIONS_DIRECTORY)).toEqual({ applied: [], alreadyApplied: ["0001"] });
+    }
+
+    expect(await history()).toEqual(before);
+    expect(await tables()).toEqual(SCHEMA_TABLES);
+  });
+
+  test("concurrent runners apply each migration exactly once", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => migrate(db.pool, MIGRATIONS_DIRECTORY)),
+    );
+    expect(results.flatMap((result) => result.applied)).toEqual(["0001"]);
+    expect(await history()).toHaveLength(1);
+  });
+
+  test("status reports applied migrations", async () => {
+    expect(await migrationStatus(db.pool, MIGRATIONS_DIRECTORY)).toEqual([
+      { version: "0001", name: "initial_schema", state: "pending", appliedAt: null },
+    ]);
+    await migrate(db.pool, MIGRATIONS_DIRECTORY);
+    expect(await migrationStatus(db.pool, MIGRATIONS_DIRECTORY)).toEqual([
+      { version: "0001", name: "initial_schema", state: "applied", appliedAt: expect.any(Date) },
+    ]);
+  });
+});
+
+describe("safety checks", () => {
+  let copy: Awaited<ReturnType<typeof copyMigrations>>;
+
+  beforeEach(async () => {
+    copy = await copyMigrations();
+  });
+
+  afterEach(async () => {
+    await copy.remove();
+  });
+
+  test("refuses to continue when an applied migration was edited", async () => {
+    await migrate(db.pool, copy.directory);
+    const file = path.join(copy.directory, "0001_initial_schema.up.sql");
+    await writeFile(file, `${await readFile(file, "utf8")}\n-- edited later\n`);
+
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(MigrationError);
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/modified after it was applied/);
+    expect((await migrationStatus(db.pool, copy.directory))[0]?.state).toBe("changed");
+  });
+
+  test("line endings do not count as an edit (Windows CRLF vs Linux LF checkouts)", async () => {
+    await migrate(db.pool, copy.directory);
+    const file = path.join(copy.directory, "0001_initial_schema.up.sql");
+    const sql = await readFile(file, "utf8");
+    const flipped = sql.includes("\r\n") ? sql.replace(/\r\n/g, "\n") : sql.replace(/\n/g, "\r\n");
+    await writeFile(file, flipped);
+
+    expect(await migrate(db.pool, copy.directory)).toEqual({ applied: [], alreadyApplied: ["0001"] });
+  });
+
+  test("refuses to continue when an applied migration's file is missing", async () => {
+    await migrate(db.pool, copy.directory);
+    await rm(path.join(copy.directory, "0001_initial_schema.up.sql"));
+    await rm(path.join(copy.directory, "0001_initial_schema.down.sql"));
+
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/has no file/);
+    expect((await migrationStatus(db.pool, copy.directory))[0]?.state).toBe("missing-file");
+  });
+
+  test("a failing migration is rolled back completely and not recorded", async () => {
+    await migrate(db.pool, copy.directory);
+    await writeFile(
+      path.join(copy.directory, "0002_broken.up.sql"),
+      "CREATE TABLE half_done (id integer);\nALTER TABLE products ADD COLUMN half_done integer;\nSELECT 1 / 0;\n",
+    );
+
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/0002_broken failed and was rolled back: division by zero/);
+
+    expect(await tables()).toEqual(SCHEMA_TABLES);
+    const productColumns = await db.pool.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'half_done'",
+    );
+    expect(productColumns.rowCount).toBe(0);
+    expect((await history()).map((row) => row.version)).toEqual(["0001"]);
+  });
+
+  test("applies later migrations in order and rejects one numbered before an applied migration", async () => {
+    await writeFile(path.join(copy.directory, "0003_later.up.sql"), "CREATE TABLE later_table (id integer);\n");
+    expect((await migrate(db.pool, copy.directory)).applied).toEqual(["0001", "0003"]);
+
+    await writeFile(path.join(copy.directory, "0002_too_late.up.sql"), "CREATE TABLE too_late (id integer);\n");
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/older than applied 0003/);
+    expect(await tables()).not.toContain("too_late");
+  });
+
+  test("rejects unrecognised file names and orphaned down files", async () => {
+    await writeFile(path.join(copy.directory, "2_bad_name.sql"), "SELECT 1;\n");
+    await expect(loadMigrations(copy.directory)).rejects.toThrow(/Unrecognised migration file name: 2_bad_name.sql/);
+    await rm(path.join(copy.directory, "2_bad_name.sql"));
+
+    await writeFile(path.join(copy.directory, "0009_orphan.down.sql"), "SELECT 1;\n");
+    await expect(loadMigrations(copy.directory)).rejects.toThrow(/0009 has no matching up migration/);
+  });
+});
+
+describe("rollback", () => {
+  test("reverts the latest migration completely, after which it re-applies cleanly", async () => {
+    await migrate(db.pool, MIGRATIONS_DIRECTORY);
+    await db.pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('1', 7, 0)");
+
+    expect(await rollbackLatest(db.pool, MIGRATIONS_DIRECTORY)).toBe("0001");
+    expect(await tables()).toEqual(["schema_migrations"]);
+    expect(await functions()).toEqual([]);
+    expect(await history()).toEqual([]);
+
+    expect((await migrate(db.pool, MIGRATIONS_DIRECTORY)).applied).toEqual(["0001"]);
+    expect(await tables()).toEqual(SCHEMA_TABLES);
+  });
+
+  test("does nothing when no migration is applied", async () => {
+    expect(await rollbackLatest(db.pool, MIGRATIONS_DIRECTORY)).toBeNull();
+  });
+
+  test("refuses when the latest migration has no down file", async () => {
+    const copy = await copyMigrations();
+    try {
+      await writeFile(path.join(copy.directory, "0002_no_down.up.sql"), "CREATE TABLE kept (id integer);\n");
+      await migrate(db.pool, copy.directory);
+      await expect(rollbackLatest(db.pool, copy.directory)).rejects.toThrow(/0002_no_down has no down file/);
+      expect(await tables()).toContain("kept");
+    } finally {
+      await copy.remove();
+    }
+  });
+});
+
+test("the real migrations directory holds 0001 with a down file", async () => {
+  const migrations = await loadMigrations(MIGRATIONS_DIRECTORY);
+  expect(migrations.map(({ version, name, downSql }) => ({ version, name, hasDown: downSql !== null }))).toEqual([
+    { version: "0001", name: "initial_schema", hasDown: true },
+  ]);
+});

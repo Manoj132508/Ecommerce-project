@@ -1,8 +1,8 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–2 committed; R18 (operator injection) and R20 (Express security update) fixed. Phase 3 not started, awaiting owner approval. Owner-gated: 0.5, 0.6, 1.7, production deploy. D1–D4 approved 2026-10-21.**
+Status: **Phases 0–2, R18 and R20 committed and pushed. Phase 3A (PostgreSQL schema and migrations) complete locally, awaiting approval before any data transfer. MongoDB is still the only application database. Owner-gated: 0.5, 0.6, 1.7, production deploy, Phase 3 decisions. D1–D4 approved 2026-10-21.**
 
-> **Production blocker (unchanged since Phase 0):** the production backend host and database cannot be identified from the repository. There are no deploy config files (`render.yaml`, `Procfile`, `vercel.json`, Dockerfile, CI workflows) and no host or Atlas references. The frontend's `VITE_API_URL` lives in Vercel project settings, outside the repo. Until the owner supplies the host, its build/start commands and the database location, nobody can back up the production DB, re-check the 1.4 backfills there, or deploy anything after Phase 1. Phase 2 also changes the start command (R21).
+> **Production blocker (updated 2026-10-21):** the owner confirmed the backend is hosted on **Render**. The production **database** location (MongoDB host) and Render's build/start settings still can't be identified from the repository. There are no deploy config files (`render.yaml`, `Procfile`, `vercel.json`, Dockerfile, CI workflows) and no host or Atlas references. The frontend's `VITE_API_URL` lives in Vercel project settings, outside the repo. Until the owner supplies the host, its build/start commands and the database location, nobody can back up the production DB, re-check the 1.4 backfills there, or deploy anything after Phase 1. Phase 2 also changes the start command (R21).
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
 
 Target stack:
@@ -139,108 +139,25 @@ Browse/search products (client-side filter via Redux `searchTerm`), product deta
 
 ### 3.1 Schema
 
-```sql
--- Extensions: none required (gen_random_uuid() is built in since PG 13)
+**Implemented in Phase 3A** as `ecommerce-backend/db/migrations/0001_initial_schema.up.sql`. That file is the single source of truth; the design summary, backup and rollback procedures are in `ecommerce-backend/db/README.md`. The draft SQL that used to be here was superseded by the approved decisions. The main differences from that draft:
 
-CREATE TABLE users (
-  -- D2: existing MongoDB ObjectId hex strings are kept verbatim, so every
-  -- issued JWT ({ id: "<24 hex>" }) and every orders.userId still resolves.
-  -- New users get an app-generated 24-hex id (crypto.randomBytes(12)), so the
-  -- strict /^[a-f\d]{24}$/i check in `protect` stays unchanged.
-  id              text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{24}$'),
-  name            text NOT NULL CHECK (btrim(name) <> ''),
-  email           text NOT NULL CHECK (email = lower(btrim(email))),
-  password_hash   text NOT NULL,                   -- bcrypt, cost 12 (copied verbatim)
-  is_admin        boolean NOT NULL DEFAULT false,
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  updated_at      timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX users_email_key ON users (email);
+- **`carts` table (D1).** One cart per user (`UNIQUE user_id`, deleted with the user). `cart_items` belongs to a cart, not directly to a user. The shared MongoDB cart is not migrated or assigned.
+- **IDs (D2).** `users.id` is `text` holding the original ObjectId hex (`CHECK ~ '^[0-9a-f]{24}$'`); there's no `legacy_mongo_id`. Product and order ids are `uuid`, keeping the existing values. Delivery option ids are digit-string `text`.
+- **Cart quantity (FD1).** `cart_items.quantity` is an `integer` with `CHECK BETWEEN 1 AND 10`. `order_items.quantity` is only `>= 1`, because history may exceed the cart limit.
+- **Legacy flag (D4).** `is_legacy` is on **`orders`** (imported from MongoDB), not on lines. Application orders must have a user and complete customer details. A trigger requires a product snapshot on every line of a non-legacy order; legacy lines may have none. Snapshots are all-or-nothing and `order_items` rejects every UPDATE (trigger).
+- **Product references.** Neither `cart_items.product_id` (D3) nor `order_items.product_id` (D4) has a foreign key. The original id is always kept, and the current product is resolved with a LEFT JOIN that may return nothing. `product_id` itself stays `NOT NULL`, because `/tracking` and the API contract identify a line by it.
+- **Foreign keys.** `orders.user_id` uses `ON DELETE RESTRICT` (history is never deleted with a user); `cart_items.delivery_option_id` also uses RESTRICT.
+- **Integrity checks.** Normalised unique emails, bcrypt hash format, half-step ratings 0–5, no NULL array elements, all-or-nothing non-blank customer details, and `updated_at` triggers.
+- **Stock.** `products.stock` is stored (`>= 0`) and **not enforced** anywhere.
 
-CREATE TABLE products (
-  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),   -- all 35 existing ids are valid UUIDs
-  image             text NOT NULL,
-  name              text NOT NULL,
-  description       text NOT NULL DEFAULT '',
-  how_it_works      text NOT NULL DEFAULT '',
-  highlights        text[] NOT NULL DEFAULT '{}',
-  care_instructions text NOT NULL DEFAULT '',
-  category          text NOT NULL DEFAULT '',
-  stock             integer NOT NULL DEFAULT 0 CHECK (stock >= 0),
-  rating_stars      numeric(2,1) NOT NULL DEFAULT 0 CHECK (rating_stars BETWEEN 0 AND 5),
-  rating_count      integer NOT NULL DEFAULT 0 CHECK (rating_count >= 0),
-  price_cents       integer NOT NULL CHECK (price_cents >= 0),
-  keywords          text[] NOT NULL DEFAULT '{}',
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  updated_at        timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX products_created_at_idx ON products (created_at);
-
-CREATE TABLE delivery_options (
-  id            text PRIMARY KEY,                  -- '1','2','3' are part of the API contract
-  delivery_days integer NOT NULL CHECK (delivery_days >= 0),
-  price_cents   integer NOT NULL CHECK (price_cents >= 0),
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE cart_items (
-  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id            text NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- D1: carts are owned
-  product_id         uuid NOT NULL,   -- no FK (decision D3): deleted products stay in the cart as "unavailable"
-  quantity           integer NOT NULL CHECK (quantity >= 1),
-  delivery_option_id text NOT NULL REFERENCES delivery_options(id),
-  created_at         timestamptz NOT NULL DEFAULT now(),
-  updated_at         timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (user_id, product_id)
-);
-
-CREATE TABLE orders (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id             text REFERENCES users(id) ON DELETE SET NULL,  -- nullable: 6 legacy orders have none
-  customer_full_name  text,      -- customer_* nullable: 6 legacy orders have no customer
-  customer_email      text,
-  customer_phone      text,
-  customer_address    text,
-  customer_city       text,
-  customer_postal_code text,
-  customer_country    text,
-  ordered_at          timestamptz NOT NULL,         -- serialised as orderTimeMs
-  total_cost_cents    integer NOT NULL CHECK (total_cost_cents >= 0),
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX orders_user_ordered_idx ON orders (user_id, ordered_at DESC);
-
-CREATE TABLE order_items (
-  order_id               uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  position               integer NOT NULL,           -- preserves array order
-  product_id             uuid NOT NULL,              -- deliberately NO FK: 5/8 referenced products are already deleted,
-                                                     -- and /tracking looks items up by productId
-  quantity               integer NOT NULL CHECK (quantity >= 1),
-  estimated_delivery_at  timestamptz NOT NULL,       -- serialised as estimatedDeliveryTimeMs
-  -- D4: legacy lines (migrated without snapshots) are flagged; every new line
-  -- must carry an immutable name/price snapshot. Never backfilled.
-  is_legacy              boolean NOT NULL DEFAULT false,
-  snapshot_name          text,
-  snapshot_image         text,
-  snapshot_price_cents   integer CHECK (snapshot_price_cents >= 0),
-  snapshot_description   text,
-  snapshot_category      text,
-  PRIMARY KEY (order_id, position),
-  CHECK (is_legacy OR (snapshot_name IS NOT NULL AND snapshot_price_cents IS NOT NULL))
-);
-
--- D4: order history is append-only; snapshots cannot be edited after insert.
-CREATE FUNCTION reject_order_item_update() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  RAISE EXCEPTION 'order_items are immutable';
-END $$;
-CREATE TRIGGER order_items_immutable BEFORE UPDATE ON order_items
-  FOR EACH ROW EXECUTE FUNCTION reject_order_item_update();
-
-CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
-```
+Every constraint was checked against a read-only profile of the live MongoDB data (2026-10-21):
+- whole-cent prices and totals;
+- half-step ratings;
+- customer details all-or-nothing (2 orders with all, 6 with none);
+- order-line quantities 1–6;
+- normalised emails;
+- `$2b$12$` hashes;
+- no dangling order user ids.
 
 Field-level conversions:
 
@@ -261,6 +178,13 @@ Field-level conversions:
 `pg` returns `numeric` as string and `bigint` as string — use `integer` for cents (max ≈ $21.4M per value) and convert `numeric` explicitly.
 
 ### 3.2 Query-by-query mapping
+
+> **Updated for the implemented schema (Phase 3A).** The cart rows below were drafted when `cart_items` had a `user_id` column. With the `carts` table:
+> - Read `… WHERE ci.user_id = $1` as `… FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1`.
+> - Read `ON CONFLICT (user_id, product_id)` as `ON CONFLICT (cart_id, product_id)`.
+> - The cart row is created on first add: `INSERT INTO carts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`.
+>
+> Under FD1, an add that would push a merged quantity above 10 violates `cart_items_quantity_range` (SQLSTATE 23514), which the repository maps to a 400. Checkout's `FOR UPDATE` lock and `DELETE` likewise target the user's own cart (D1).
 
 | Location | Mongoose | Parameterised SQL |
 | --- | --- | --- |
@@ -432,16 +356,40 @@ Behaviour changes: **none in API responses.** Internal-only differences:
 
 ### Phase 3 — Postgres schema, data access layer and ETL (Mongo still live)
 
-- [ ] 3.1 `src/db/pool.ts` (typed wrapper over `config/postgres.js`; `withTransaction(fn)` helper)
-- [ ] 3.2 `db/migrations/001_init.sql` (schema in §3.1) + tiny runner using `schema_migrations`; `npm run db:migrate`
+**Phase 3A (schema and migrations): complete locally, awaiting approval before any data transfer.** MongoDB remains the only application database; no application query changed and no data was copied.
+
+- [x] 3A.1 Read-only profile of the live MongoDB values each constraint covers (§3.1)
+- [x] 3A.2 `db/migrations/0001_initial_schema.up.sql` / `.down.sql`: users, products, delivery_options, carts, cart_items, orders, order_items (plus `schema_migrations`, created by the runner)
+- [x] 3A.3 `db/migrator.ts` + `scripts/dbMigrate.ts`. Scripts: `db:migrate`, `db:status`, `db:rollback -- --confirm`. History table with SHA-256 checksums (CRLF/LF-normalised), advisory lock, one transaction per migration, refuses edited, missing or out-of-order migrations
+- [x] 3A.4 `npm run test:db`: **73 tests** (16 runner + 57 schema) against a throwaway `postgres:17-alpine` container (random port on 127.0.0.1, random credentials, a fresh database per test, removed afterwards; never the compose database). Mutation check: weakening the quantity range, the immutability trigger, D3 (adding a product FK) and the new-order rule made exactly the 4 matching tests fail
+- [x] 3A.5 Local dev Postgres (empty): backed up, then `db:migrate` applied 0001 (72 ms). A second run was a no-op and `db:status` shows it applied. Rollback without `--confirm` refuses. The documented backup and restore commands were executed and verified
+- [x] 3A.6 `db/README.md`: schema design, commands, safety rules, backup, restore and rollback
+- [ ] 3A.7 Owner decisions before 3B: see "Outstanding decisions (Phase 3)" below
+
+Remaining Phase 3 work (3B onwards, not started):
+
+- [ ] 3.1 `db/pool.ts` (typed wrapper over `config/postgres.ts`; `withTransaction(fn)` helper; fixes R19)
+- [x] 3.2 ~~`db/migrations/001_init.sql` + runner~~ Done in Phase 3A
 - [ ] 3.3 Repository interfaces per domain (`ProductRepo`, `DeliveryOptionRepo`, `UserRepo`, `CartRepo`, `OrderRepo`) with a Mongo implementation (wrapping current Mongoose code) and a Postgres implementation (parameterised SQL only — no string-built SQL, ever)
 - [ ] 3.4 Per-domain switch `DATA_SOURCE_<DOMAIN>=mongo|postgres` (default `mongo`)
 - [ ] 3.5 `scripts/etl/mongoToPostgres.ts`: reads Mongo read-only, upserts into Postgres in one transaction per collection (`ON CONFLICT (id) DO UPDATE`), copies user ObjectId hex strings verbatim (D2), sets `is_legacy = true` on order lines without a snapshot (D4), converts ms → timestamptz, flattens rating/customer, explodes order products with `position`; idempotent and re-runnable
 - [ ] 3.6 `scripts/etl/verify.ts`: row counts per table = doc counts; per-row checksum of key fields; every `orders.user_id` resolves; every product price/rating equal; prints a diff and exits non-zero on mismatch
 - [ ] 3.7 Run the characterisation suite against each Postgres repo implementation
 
-**Acceptance:** `db:migrate` creates the schema on an empty DB and is a no-op on rerun; ETL + verify exit 0 twice in a row; characterisation suite passes with every `DATA_SOURCE_*=postgres`.
-**Rollback:** nothing user-facing changed; drop and recreate the Postgres schema.
+**Acceptance:** `db:migrate` creates the schema on an empty DB and is a no-op on rerun (**met in 3A**); ETL + verify exit 0 twice in a row; characterisation suite passes with every `DATA_SOURCE_*=postgres`.
+**Rollback:** nothing user-facing changed; `npm run db:rollback -- --confirm` or restore the pre-migration `pg_dump` (`db/README.md`).
+
+#### Outstanding decisions (Phase 3)
+
+These need owner input before data transfer (3.5) or production use. None blocks reviewing Phase 3A.
+
+1. **Production database location.** The backend is on **Render** (owner, 2026-10-21), but the production MongoDB host (Atlas or other) and the target PostgreSQL (Render Postgres? which plan, region, version) are unknown. The schema is tested on PostgreSQL 17; the production engine should match.
+2. **How production migrations run.** The runner runs from source through `tsx` (a dev dependency) and isn't in `dist/`. Options: (a) a Render pre-deploy command `npm run db:migrate` with dev dependencies installed; (b) compile the runner into `dist/` and run `node dist/scripts/dbMigrate.js`. Also needed: who takes the pre-migration `pg_dump`, and when.
+3. **Production data must fit the constraints.** Before ETL, run the §3.1 read-only profile on production MongoDB. In particular: product/order ids are UUIDs, user ids are ObjectIds, emails are normalised, ratings are half steps, money and quantities are whole numbers, and customer details are all-or-nothing. Any mismatch needs a cleaning rule decided **before** transfer. The ETL must fail, never silently coerce.
+4. **Dangling user references in legacy orders.** There are none locally. If production orders reference deleted users, the RESTRICT foreign key rejects them. Options: import as `is_legacy` with `user_id` NULL (loses the link), or recreate placeholder users (invents data, against D4). Recommendation: NULL plus an ETL report.
+5. **The existing shared-cart lines** (4 locally) are **not migrated** (D1). Confirm they're discarded at cut-over; they remain in the MongoDB backups.
+6. **Should `orders` rows also be immutable?** Today only `order_items` is (D4). Making `orders` read-only would also block legitimate future status fields. Recommendation: decide when order statuses are designed.
+7. **Mapping notes for 3B (no decision needed, recorded for implementation).** `pg` returns `numeric` (`rating_stars`) as a string, so the repository converts it to `Number`. Constraint names map to the existing API errors: a unique email to 409, the quantity range to 400, a missing delivery option to 400 "Invalid delivery option".
 
 ### Phase 4 — Cut over domain by domain (lowest risk first)
 
@@ -578,9 +526,9 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Phase 1 is committed and pushed (`ced0ff8` on `origin/migration/postgres`). Phase 2 is complete locally and awaiting review. **Phase 3 waits for owner approval.**
+Pushed to `origin/migration/postgres`: Phase 1 (`ced0ff8`), Phase 2 (`512f759`), R18 (`fd6b6e1`) and R20 (`35c4a46`). Phase 3A is complete locally. **Data transfer waits for owner approval.**
 
-1. Owner: review Phase 2 and approve committing/pushing it to `migration/postgres`.
-2. R18 and R20 fixed; `npm audit` reports 0 vulnerabilities on `migration/postgres`. (`main`, which production still runs, keeps Express 4.21.2 until this branch is deployed.)
-3. Owner: resolve the production blocker (0.6). Identify the host and database, back up the DB (§7), re-check 1.4, and apply the R21 build/start commands before any deploy.
-4. Then Phase 3 (Postgres schema, repositories, ETL), with `npm test` and the parity check as gates.
+1. Owner: review Phase 3A (`db/README.md`, migration 0001) and approve committing/pushing it.
+2. Owner: answer the Phase 3 outstanding decisions (§6, Phase 3), especially the production database location (1) and how migrations run on Render (2).
+3. Owner: resolve the production blocker (0.6): back up the production DB (§7), run the read-only data profile there (decision 3), and apply the R21 build/start commands before any deploy.
+4. Then Phase 3B: `db/pool.ts`, repositories behind `DATA_SOURCE_*` switches, ETL and verification. MongoDB stays authoritative until Phase 4.

@@ -14,9 +14,13 @@
     "typecheck": "tsc -p tsconfig.json",
     "postgres:env": "tsx scripts/createPostgresEnv.ts",
     "postgres:check": "tsx scripts/checkPostgresConnection.ts",
+    "db:migrate": "tsx scripts/dbMigrate.ts up",
+    "db:status": "tsx scripts/dbMigrate.ts status",
+    "db:rollback": "tsx scripts/dbMigrate.ts rollback",
     "migrate:product-descriptions": "tsx scripts/populateProductDescriptions.ts",
     "migrate:product-categories": "tsx scripts/populateProductCategories.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
