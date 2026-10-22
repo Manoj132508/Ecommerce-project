@@ -6,3 +6,8 @@ next-env.d.ts
 
 # Local settings (copy .env.example to .env.local)
 .env*.local
+
+# Browser test output (screenshots, traces, HTML report)
+/test-results/
+/playwright-report/
+/blob-report/
