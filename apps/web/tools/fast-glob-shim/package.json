@@ -1,0 +1,11 @@
+{
+  "name": "fast-glob",
+  "version": "3.3.1-local-shim.1",
+  "description": "Local stand-in for fast-glob, used only by @next/eslint-plugin-next (see index.js).",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

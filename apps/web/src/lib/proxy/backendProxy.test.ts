@@ -118,6 +118,29 @@ describe("request headers", () => {
     }
   });
 
+  test("client-address forwarding: off by default; client-supplied X-Client-IP and X-Proxy-Secret never pass", async () => {
+    await proxy(browserRequest("/api/auth/login", { method: "POST", headers: { "X-Client-IP": "6.6.6.6", "X-Proxy-Secret": "guess", "X-Real-IP": "6.6.6.6" }, body: "{}" }));
+    expect(received[0]?.headers).not.toHaveProperty("x-client-ip");
+    expect(received[0]?.headers).not.toHaveProperty("x-proxy-secret");
+  });
+
+  test("client-address forwarding: the platform header's address is sent with the shared secret", async () => {
+    const clientIp = { header: "x-real-ip", secret: "s".repeat(40) };
+    await proxyToBackend(browserRequest("/api/auth/login", { method: "POST", headers: { "X-Real-IP": "203.0.113.7", "X-Client-IP": "6.6.6.6" }, body: "{}" }), { backendOrigin, clientIp });
+    expect(received[0]?.headers).toMatchObject({ "x-client-ip": "203.0.113.7", "x-proxy-secret": "s".repeat(40) });
+
+    await proxyToBackend(browserRequest("/api/products", { headers: { "X-Real-IP": "2001:db8::1" } }), { backendOrigin, clientIp });
+    expect(received[1]?.headers["x-client-ip"]).toBe("2001:db8::1");
+
+    // A missing or malformed value sends nothing (Express then uses its own view).
+    for (const value of [undefined, "not-an-ip", "1.2.3.4, 5.6.7.8", "999.1.1.1"]) {
+      received = [];
+      await proxyToBackend(browserRequest("/api/products", { headers: value ? { "X-Real-IP": value } : {} }), { backendOrigin, clientIp });
+      expect(received[0]?.headers).not.toHaveProperty("x-client-ip");
+      expect(received[0]?.headers).not.toHaveProperty("x-proxy-secret");
+    }
+  });
+
   test("only the session cookies are forwarded", async () => {
     await proxy(browserRequest("/api/auth/session", {
       headers: { Cookie: "_ga=GA1.2; __Host-ecom_session=abc; theme=dark; ecom_dev_session=def; __Host-other=x" },

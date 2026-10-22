@@ -92,10 +92,9 @@ const sessionAuth = (config: SessionAuthConfig = SECURE, pool: pg.Pool = db.pool
 /** null: the feature is off (no sessionAuth), as in production today. */
 const appWith = (auth: SessionAuth | null = sessionAuth()) => createApp({ repositories: createRepositories(ALL_POSTGRES, db.pool), sessionAuth: auth ?? undefined });
 
-// Origins outside the CORS allow-list are rejected by the existing cors()
-// middleware before any route runs, with a 500 (pre-existing behaviour, see
-// MIGRATION_PLAN.md R36). A missing Origin reaches the session code: 403.
-const REFUSED_BY_CORS = 500;
+// Origins outside the CORS allow-list are refused with a JSON 403 before any
+// route runs (R36, fixed in Phase 5). A missing Origin reaches the session code: also 403.
+const REFUSED_BY_CORS = 403;
 const bearer = (id: string) => `Bearer ${jwt.sign({ id }, process.env.JWT_SECRET ?? "", { expiresIn: "1h" })}`;
 const tokenHash = (token: string) => createHash("sha256").update(token).digest();
 

@@ -26,6 +26,7 @@ import type {
   UserRepository,
   Viewer,
 } from "./types.js";
+import { verifyWithoutAccount } from "../utils/passwords.js";
 
 type DeliveryOptionDocument = InstanceType<typeof DeliveryOption>;
 type CartItemDocument = InstanceType<typeof CartItem>;
@@ -99,7 +100,10 @@ export class MongoUserRepository implements UserRepository {
 
   async authenticate(email: string, password: string): Promise<AuthUser | null> {
     const user = await User.findOne({ email }).select("+password");
-    if (!user || !(await user.matchPassword(password))) {
+    if (!user) {
+      return verifyWithoutAccount(password).then(() => null);
+    }
+    if (!(await user.matchPassword(password))) {
       return null;
     }
     return user;

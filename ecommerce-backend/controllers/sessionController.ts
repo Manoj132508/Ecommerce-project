@@ -1,5 +1,7 @@
 import type { Request, RequestHandler, Response } from "express";
 import { requireUser } from "../middleware/authMiddleware.js";
+import { loginCredentials, registerAccount, type RegisterBody } from "./authController.js";
+import { authenticateWithOptionalLimit, sendTooManyAttempts, type AuthRateLimiter } from "../auth/rateLimit.js";
 import type { AuthUser, UserRepository } from "../repositories/types.js";
 import {
   clearSessionCookie,
@@ -10,19 +12,16 @@ import {
   type SessionAuth,
 } from "../auth/sessionAuth.js";
 import { csrfTokenFor } from "../auth/tokens.js";
-import type { ErrorResponse, SessionResponse, UserProfile } from "../types/api.js";
+import type { AccountResponse, ErrorResponse, SessionResponse, UserProfile } from "../types/api.js";
 import { errorMessage } from "../utils/errors.js";
 
 type NoParams = Record<string, string>;
 
-interface LoginBody {
-  email?: unknown;
-  password?: unknown;
-}
+type LoginBody = Omit<RegisterBody, "name">;
 
 const profile = (user: AuthUser): UserProfile => ({ _id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin });
 
-export function createSessionController(users: UserRepository, auth: SessionAuth) {
+export function createSessionController(users: UserRepository, auth: SessionAuth, rateLimiter?: AuthRateLimiter) {
   const { config, sessions } = auth;
 
   /** Starts a session for an authenticated user, rotating any session the browser presented. */
@@ -45,24 +44,51 @@ export function createSessionController(users: UserRepository, auth: SessionAuth
       return res.status(415).json({ message: "Send the credentials as JSON" });
     }
 
-    const { email, password } = req.body ?? {};
-    if (
-      typeof email !== "string" || !email.trim() ||
-      typeof password !== "string" || !password ||
-      Buffer.byteLength(password, "utf8") > 72
-    ) {
+    const credentials = loginCredentials(req.body);
+    if (!credentials) {
       return res.status(400).json({ message: "Provide an email and password" });
     }
 
     try {
-      // The same password check as the legacy login (bcrypt in the user repository).
-      const user = await users.authenticate(email.trim().toLowerCase(), password);
-      if (!user) {
+      // The same password check (bcrypt in the user repository) and the same
+      // per-account failure limit as the legacy login.
+      const result = await authenticateWithOptionalLimit(users, rateLimiter, credentials.email, credentials.password);
+      if (result.kind === "limited") {
+        return sendTooManyAttempts(res, result.retryAfterSeconds);
+      }
+      if (result.kind === "invalid") {
         return res.status(401).json({ message: "Invalid email or password" });
       }
-      return await startSession(req, res, user);
+      return await startSession(req, res, result.user);
     } catch (error) {
       console.error("Session login failed:", errorMessage(error));
+      return res.status(500).json({ message: "Server error" });
+    }
+  };
+
+  // @desc Create an account for the cookie-session flow. Same rules as the
+  //       legacy registration, but no token and no session: the browser then
+  //       signs in through POST /api/auth/session.
+  // @route POST /api/auth/accounts
+  const createAccount: RequestHandler<NoParams, AccountResponse | ErrorResponse, RegisterBody | undefined> = async (req, res) => {
+    if (!originAllowed(req, config)) {
+      return res.status(403).json({ message: "Origin not allowed" });
+    }
+    if (!req.is("application/json")) {
+      return res.status(415).json({ message: "Send the account details as JSON" });
+    }
+    try {
+      const result = await registerAccount(users, req.body);
+      if (result.kind === "invalid") {
+        return res.status(400).json({ message: result.message });
+      }
+      if (result.kind === "exists") {
+        return res.status(409).json({ message: "User already exists" });
+      }
+      res.set("Cache-Control", "no-store");
+      return res.status(201).json({ user: profile(result.user) });
+    } catch (error) {
+      console.error("Account creation failed:", errorMessage(error));
       return res.status(500).json({ message: "Server error" });
     }
   };
@@ -116,5 +142,5 @@ export function createSessionController(users: UserRepository, auth: SessionAuth
     originAllowed(req, config) ? next() : res.status(403).json({ message: "Origin not allowed" })
   );
 
-  return { login, exchange, current, logout, logoutAll, requireAllowedOrigin };
+  return { login, createAccount, exchange, current, logout, logoutAll, requireAllowedOrigin };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { EnvironmentError, parseAppName, parseBackendOrigin } from "./parse";
+import { EnvironmentError, parseAppName, parseBackendOrigin, parseClientIpForwarding } from "./parse";
 
 describe("BACKEND_ORIGIN", () => {
   test.each([
@@ -26,6 +26,17 @@ describe("BACKEND_ORIGIN", () => {
   ])("rejects %j", (value, message) => {
     expect(() => parseBackendOrigin(value)).toThrow(EnvironmentError);
     expect(() => parseBackendOrigin(value)).toThrow(message);
+  });
+});
+
+describe("client-address forwarding", () => {
+  test("both settings or neither; a header name and a long secret", () => {
+    expect(parseClientIpForwarding(undefined, undefined)).toBeUndefined();
+    expect(parseClientIpForwarding(" X-Real-IP ", "s".repeat(32))).toEqual({ header: "x-real-ip", secret: "s".repeat(32) });
+    expect(() => parseClientIpForwarding("x-real-ip", undefined)).toThrow(/both/);
+    expect(() => parseClientIpForwarding(undefined, "s".repeat(32))).toThrow(/both/);
+    expect(() => parseClientIpForwarding("x real ip", "s".repeat(32))).toThrow(/header name/);
+    expect(() => parseClientIpForwarding("x-real-ip", "short")).toThrow(/32 characters/);
   });
 });
 

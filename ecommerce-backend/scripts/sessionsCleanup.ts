@@ -7,6 +7,7 @@
 //   npm run sessions:cleanup -- --retention-days 30   keep finished sessions longer (default 7)
 import type { Pool } from "pg";
 import { PostgresSessionRepository } from "../auth/sessionRepository.js";
+import { PostgresRateLimitStore } from "../auth/rateLimitStores.js";
 import { errorMessage } from "../utils/errors.js";
 
 const flags = process.argv.slice(2);
@@ -28,6 +29,7 @@ try {
     // Lifetimes are not used by deleteExpired.
     const sessions = new PostgresSessionRepository(pool, { idleSeconds: 1, absoluteSeconds: 1, renewAfterSeconds: 1 });
     console.log(`Database "${database}": deleted ${await sessions.deleteExpired(retentionSeconds)} session(s) finished more than ${retentionDays} day(s) ago.`);
+    console.log(`Database "${database}": deleted ${await new PostgresRateLimitStore(pool).deleteExpired(retentionSeconds)} ended rate-limit window(s).`);
   } else {
     const { rows: [row] } = await pool.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM auth_sessions

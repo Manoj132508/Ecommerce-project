@@ -28,6 +28,7 @@ import {
   type UserRepository,
   type Viewer,
 } from "./types.js";
+import { verifyWithoutAccount } from "../utils/passwords.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -216,7 +217,10 @@ export class PostgresUserRepository implements UserRepository {
     const { rows: [row] } = await this.pool.query<UserRow & { password_hash: string }>(
       "SELECT id, name, email, is_admin, password_hash FROM users WHERE email = $1", [email],
     );
-    if (!row?.password_hash || !(await bcrypt.compare(password, row.password_hash))) {
+    if (!row?.password_hash) {
+      return verifyWithoutAccount(password).then(() => null);
+    }
+    if (!(await bcrypt.compare(password, row.password_hash))) {
       return null;
     }
     return toUser(row);

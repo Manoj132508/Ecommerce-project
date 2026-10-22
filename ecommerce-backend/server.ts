@@ -14,6 +14,10 @@ import { verifySchemaCurrent } from "./db/pool.js";
 import { loadSessionAuthConfig } from "./auth/config.js";
 import type { SessionAuth } from "./auth/sessionAuth.js";
 import { PostgresSessionRepository } from "./auth/sessionRepository.js";
+import { loadClientIpConfig } from "./auth/clientIp.js";
+import { AuthRateLimiter, loadAuthRateLimitRules } from "./auth/rateLimit.js";
+import { MongoRateLimitStore, PostgresRateLimitStore } from "./auth/rateLimitStores.js";
+import mongoose from "mongoose";
 import { createRepositories } from "./repositories/index.js";
 import { errorMessage } from "./utils/errors.js";
 
@@ -58,7 +62,26 @@ async function startServer() {
       console.log(`Cookie sessions: enabled (${sessionConfig.secureCookie ? "Secure __Host- cookie" : "local HTTP development cookie"})`);
     }
 
-    const app = createApp({ repositories: createRepositories(dataSources, pool), sessionAuth });
+    // Authentication rate limits (R37): counters in the database that holds the
+    // users, shared by every instance. Only development may turn them off.
+    const clientIp = loadClientIpConfig(process.env);
+    const rateLimitRules = loadAuthRateLimitRules(process.env);
+    let rateLimiter: AuthRateLimiter | undefined;
+    if (rateLimitRules) {
+      const store = dataSources.users === "postgres" && pool
+        ? new PostgresRateLimitStore(pool)
+        : new MongoRateLimitStore(() => mongoose.connection.db);
+      rateLimiter = new AuthRateLimiter(store, rateLimitRules, clientIp);
+    } else {
+      console.log("Authentication rate limits: OFF (AUTH_RATE_LIMIT=false, development only)");
+    }
+
+    const app = createApp({
+      repositories: createRepositories(dataSources, pool),
+      sessionAuth,
+      rateLimiter,
+      trustProxyHops: clientIp.trustProxyHops,
+    });
 
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);

@@ -1,5 +1,6 @@
 // App-level behaviour outside the 16 API endpoints: health routes, CORS,
 // and Express default error responses (which are HTML, not { message }).
+import mongoose from "mongoose";
 import { afterEach, describe, expect, test } from "vitest";
 import { api } from "./helpers.js";
 
@@ -45,11 +46,29 @@ describe("CORS", () => {
     expect(response.status).toBe(200);
   });
 
-  test("rejects other origins with Express's default HTML 500 page", async () => {
-    const response = await api().get("/getjson").set("Origin", "https://evil.example");
-    expect(response.status).toBe(500);
-    expect(response.headers["content-type"]).toMatch(/text\/html/);
-    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  // R36 (Phase 5): previously Express's default HTML 500 page.
+  test.each(["https://evil.example", "null", "http://localhost:5173.evil.example", "HTTP://LOCALHOST:5173"])(
+    "rejects the origin %s with a JSON 403 and no CORS headers",
+    async (origin) => {
+      const response = await api().get("/getjson").set("Origin", origin);
+      expect(response.status).toBe(403);
+      expect(response.headers["content-type"]).toMatch(/application\/json/);
+      expect(response.body).toEqual({ message: "Origin not allowed" });
+      expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+    },
+  );
+
+  test("a rejected cross-origin write reaches no route and writes nothing", async () => {
+    const response = await api().post("/api/auth/register").set("Origin", "https://evil.example")
+      .send({ name: "Mallory", email: "mallory@example.com", password: "password-123" });
+    expect(response.status).toBe(403);
+    expect(await mongoose.connection.db.collection("users").countDocuments()).toBe(0);
+  });
+
+  test("allowed origins still get CORS preflight answers", async () => {
+    const response = await api().options("/api/auth/login").set("Origin", "http://localhost:5173").set("Access-Control-Request-Method", "POST");
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
   });
 });
 

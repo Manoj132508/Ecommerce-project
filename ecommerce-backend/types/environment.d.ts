@@ -35,6 +35,17 @@ declare global {
       /** Session idle timeout and absolute lifetime, in hours. */
       AUTH_SESSION_IDLE_HOURS?: string;
       AUTH_SESSION_ABSOLUTE_HOURS?: string;
+      /** Authentication rate limits (auth/rateLimit.ts): on unless "false" (refused in production). */
+      AUTH_RATE_LIMIT?: string;
+      AUTH_RATE_LIMIT_WINDOW_MINUTES?: string;
+      AUTH_RATE_LIMIT_LOGIN_PER_IP?: string;
+      AUTH_RATE_LIMIT_LOGIN_FAILURES_PER_ACCOUNT?: string;
+      AUTH_RATE_LIMIT_REGISTER_PER_IP?: string;
+      AUTH_RATE_LIMIT_EXCHANGE_PER_IP?: string;
+      /** Reverse proxies in front of Express that append to X-Forwarded-For (auth/clientIp.ts). */
+      TRUST_PROXY_HOPS?: string;
+      /** Shared secret letting the Next.js proxy state the browser address in X-Client-IP. */
+      PROXY_CLIENT_IP_SECRET?: string;
       NODE_ENV?: string;
     }
   }

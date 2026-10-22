@@ -20,6 +20,11 @@ export interface AuthResponse extends UserProfile {
   token: string;
 }
 
+/** POST /api/auth/accounts: the new account; no token, no session. */
+export interface AccountResponse {
+  user: UserProfile;
+}
+
 /**
  * Cookie-session responses (/api/auth/session). The session token itself is
  * only ever in the HttpOnly cookie, never in a body.

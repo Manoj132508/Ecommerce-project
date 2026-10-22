@@ -600,5 +600,19 @@ describe("connection safety guard", () => {
   });
 });
 
+describe("operational collections", () => {
+  test("authentication rate-limit counters are not extracted and do not change the source fingerprint", async () => {
+    await seed(fixture());
+    const before = await extractSource(mongoUri);
+    await withMongo((db) => db.collection<StringIdDoc>("authRateLimits").insertOne({ _id: "a".repeat(64), hits: 3, expiresAt: new Date() }));
+
+    const after = await extractSource(mongoUri);
+    expect([...after.collections.keys()]).not.toContain("authRateLimits");
+    expect(after.fingerprint).toBe(before.fingerprint);
+    expect(buildPlan(after).issues.filter((issue) => issue.code === "unknown-collection").map((issue) => issue.collection))
+      .not.toContain("authRateLimits");
+  });
+});
+
 // Keeps the MigrationPlan type in use for readers of this file.
 export type { MigrationPlan };

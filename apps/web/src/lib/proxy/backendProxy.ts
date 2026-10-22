@@ -15,8 +15,21 @@
 // Pure Web APIs (Request, Response, fetch): no Next.js imports, so it is
 // testable on its own.
 
+/**
+ * Optional: pass the browser address to Express for rate limiting. The value
+ * is read from a header the hosting platform sets and overwrites (for example
+ * x-real-ip on Vercel), never from one a client can add, and is sent with the
+ * shared secret that Express requires before believing it.
+ */
+export interface ClientIpForwarding {
+  /** Lower-case name of the platform header carrying the client address. */
+  header: string;
+  secret: string;
+}
+
 export interface ProxyOptions {
   backendOrigin: URL;
+  clientIp?: ClientIpForwarding;
   fetchImpl?: typeof fetch;
   /** Request bodies above this are refused with 413 (default 1 MiB; Express accepts 100 kB of JSON). */
   maxBodyBytes?: number;
@@ -60,12 +73,17 @@ const message = (status: number, text: string, headers: Record<string, string> =
   { status, headers: { "Cache-Control": "no-store", ...headers } },
 );
 
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV6 = /^[0-9a-f:]+(%[0-9a-z]+)?$/i;
+
+/** A plain IPv4 or IPv6 address (Express validates again). */
+export const isIpAddress = (value: string) => IPV4.test(value) || (value.includes(":") && value.length <= 45 && IPV6.test(value));
+
 /** The Express URL for a browser request, or null when the path is not allowed. */
 export function backendUrlFor(requestUrl: URL, backendOrigin: URL): URL | null {
   const path = requestUrl.pathname;
   if (!path.startsWith("/api/")) return null;
   // Empty segments, backslashes, encoded dots/slashes/backslashes/NUL, control characters.
-  // eslint-disable-next-line no-control-regex -- control characters are rejected on purpose
   if (/\/\/|\\|%2e|%2f|%5c|%00|[\u0000-\u001f\u007f]/i.test(path)) return null;
   if (path.split("/").some((segment) => segment === "." || segment === "..")) return null;
 
@@ -118,6 +136,13 @@ export async function proxyToBackend(request: Request, options: ProxyOptions): P
   }
   const cookies = sessionCookiesOnly(request.headers.get("cookie"));
   if (cookies) headers.set("cookie", cookies);
+  if (options.clientIp) {
+    const address = request.headers.get(options.clientIp.header)?.trim();
+    if (address && isIpAddress(address)) {
+      headers.set("x-client-ip", address);
+      headers.set("x-proxy-secret", options.clientIp.secret);
+    }
+  }
 
   let body: ArrayBuffer | undefined;
   if (method !== "GET" && method !== "HEAD") {

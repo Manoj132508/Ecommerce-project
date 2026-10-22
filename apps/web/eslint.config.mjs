@@ -1,28 +1,13 @@
-// Same stack as the Vite app. eslint-config-next is not used while its
-// dependency chain carries an unpatched braces advisory (GHSA-vfj7-8cjw-p6xm,
-// MIGRATION_PLAN.md R35); re-add it once a fixed release exists.
-import js from "@eslint/js";
-import globals from "globals";
-import reactHooks from "eslint-plugin-react-hooks";
-import tseslint from "typescript-eslint";
+// Official Next.js rules (core web vitals + TypeScript). Its fast-glob
+// dependency is replaced by tools/fast-glob-shim (package.json "overrides"),
+// so the unpatched braces advisory (GHSA-vfj7-8cjw-p6xm, MIGRATION_PLAN.md
+// R35) is not installed.
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTypeScript from "eslint-config-next/typescript";
+import { defineConfig, globalIgnores } from "eslint/config";
 
-export default tseslint.config(
-  { ignores: [".next", "node_modules", "next-env.d.ts"] },
-  {
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ["**/*.{ts,tsx}"],
-    languageOptions: {
-      ecmaVersion: 2022,
-      globals: { ...globals.browser, ...globals.node },
-    },
-    plugins: { "react-hooks": reactHooks },
-    rules: {
-      ...reactHooks.configs.recommended.rules,
-    },
-  },
-  {
-    files: ["**/*.mjs"],
-    extends: [js.configs.recommended],
-    languageOptions: { globals: { ...globals.node } },
-  },
-);
+export default defineConfig([
+  ...nextVitals,
+  ...nextTypeScript,
+  globalIgnores([".next/**", "node_modules/**", "next-env.d.ts", "tools/**"]),
+]);

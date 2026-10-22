@@ -38,6 +38,22 @@ export function parseBackendOrigin(value: string | undefined): URL {
   return url;
 }
 
+/**
+ * Client-address forwarding for rate limiting: both settings or neither.
+ * TRUSTED_CLIENT_IP_HEADER must be a header the hosting platform overwrites.
+ */
+export function parseClientIpForwarding(header: string | undefined, secret: string | undefined): { header: string; secret: string } | undefined {
+  const name = header?.trim().toLowerCase();
+  const value = secret?.trim();
+  if (!name && !value) return undefined;
+  if (!name || !value) {
+    throw new EnvironmentError("Set both TRUSTED_CLIENT_IP_HEADER and PROXY_CLIENT_IP_SECRET, or neither.");
+  }
+  if (!/^[a-z0-9-]+$/.test(name)) throw new EnvironmentError("TRUSTED_CLIENT_IP_HEADER must be a header name.");
+  if (value.length < 32) throw new EnvironmentError("PROXY_CLIENT_IP_SECRET must be at least 32 characters.");
+  return { header: name, secret: value };
+}
+
 export function parseAppName(value: string | undefined): string {
   const name = value?.trim();
   return name && name.length <= 60 ? name : "Ecommerce";

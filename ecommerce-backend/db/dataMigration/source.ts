@@ -37,14 +37,21 @@ export function fingerprintOf(collections: Map<string, SourceDocument[]>): strin
   return hash.digest("hex");
 }
 
-/** Reads every collection of the URI's database. Never writes. */
+/**
+ * Operational collections written by the running API, not application data:
+ * never extracted, fingerprinted or migrated. (Rate-limit counters change with
+ * every sign-in attempt, even during a write freeze.)
+ */
+export const OPERATIONAL_COLLECTIONS: ReadonlySet<string> = new Set(["authRateLimits"]);
+
+/** Reads every application collection of the URI's database. Never writes. */
 export async function extractSource(uri: string): Promise<SourceSnapshot> {
   const client = await MongoClient.connect(uri, { serverSelectionTimeoutMS: 10_000 });
   try {
     const db = client.db();
     const names = (await db.listCollections({}, { nameOnly: true }).toArray())
       .map((collection) => collection.name)
-      .filter((name) => !name.startsWith("system."))
+      .filter((name) => !name.startsWith("system.") && !OPERATIONAL_COLLECTIONS.has(name))
       .sort();
 
     const collections = new Map<string, SourceDocument[]>();
