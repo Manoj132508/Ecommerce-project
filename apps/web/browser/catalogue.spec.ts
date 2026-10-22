@@ -1,4 +1,4 @@
-import { expect, expectCleanPage, expectNoHorizontalScroll, PRODUCT_COUNT, PRODUCTS, test } from "./support";
+import { expect, expectCleanPage, expectNoHorizontalScroll, expectSeededCatalogue, PRODUCT_COUNT, PRODUCTS, test } from "./support";
 
 test.describe("catalogue", () => {
   test("home lists every product with working images, without script or hydration errors", async ({ page, problems }) => {
@@ -10,7 +10,7 @@ test.describe("catalogue", () => {
     const response = await page.goto("/");
     expect(response?.status()).toBe(200);
     await expect(page.getByRole("heading", { level: 1, name: "Products" })).toBeVisible();
-    await expect(page.getByRole("article")).toHaveCount(PRODUCT_COUNT);
+    await expectSeededCatalogue(page);
     await expectNoHorizontalScroll(page);
 
     // Load the lazy images too, then every product and rating image must have decoded.
@@ -44,7 +44,7 @@ test.describe("catalogue", () => {
     await page.goto("/products?q=no-such-thing");
     await expect(page.getByText("No products match your search.")).toBeVisible();
     await page.getByRole("link", { name: "Show all products" }).click();
-    await expect(page.getByRole("article")).toHaveCount(PRODUCT_COUNT);
+    await expectSeededCatalogue(page);
     expectCleanPage(problems, { allow: [/401 \(Unauthorized\)/] });
   });
 

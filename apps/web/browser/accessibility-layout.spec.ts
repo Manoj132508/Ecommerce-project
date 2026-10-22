@@ -68,6 +68,41 @@ test.describe("accessibility and layout", () => {
     await snapshot(page, project, "11-not-found");
   });
 
+  test("200 % zoom and 320 px reflow: no sideways scrolling, controls still reachable (Chromium)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium" || testInfo.project.name !== "chromium-desktop", "one desktop engine is enough: zoom is emulated by the CSS viewport");
+    const customer = newCustomer("Zoom");
+    const csrf = await signInThroughApi(page.request, customer);
+    await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
+    // 1366×900 at 200 % zoom is a 683×450 CSS viewport; WCAG 1.4.10 reflow is 320 CSS px wide.
+    for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }]) {
+      await page.setViewportSize(viewport);
+      for (const path of ["/", `/products/${PRODUCTS.shoes.id}`, "/cart", "/checkout", "/orders", "/account"]) {
+        await page.goto(path);
+        await settle(page);
+        await expectNoHorizontalScroll(page);
+      }
+      await snapshot(page, testInfo.project.name, `30-reflow-${viewport.width}-account`);
+      await page.goto("/checkout");
+      await settle(page);
+      await page.getByRole("button", { name: "Review order" }).scrollIntoViewIfNeeded();
+      await expect(page.getByRole("button", { name: "Review order" })).toBeInViewport();
+    }
+  });
+
+  test("Windows high contrast (forced colours): every button and field keeps a visible border (Chromium)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium", "forced-colours emulation is Chromium-only");
+    await page.emulateMedia({ forcedColors: "active" });
+    for (const [name, path] of [["home", "/"], ["product", `/products/${PRODUCTS.shoes.id}`], ["sign-in", "/login"], ["register", "/register"]] as const) {
+      await page.goto(path);
+      await settle(page);
+      const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input, select, textarea")]
+        .filter((element) => element.offsetParent !== null && getComputedStyle(element).borderTopWidth === "0px")
+        .map((element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? element.tagName));
+      expect(borderless, `${name}: controls without a border in forced colours`).toEqual([]);
+      await snapshot(page, testInfo.project.name, `31-forced-colors-${name}`);
+    }
+  });
+
   test("layout stability of the home page (Chromium only: layout-shift entries)", async ({ page, browserName }, testInfo) => {
     test.skip(browserName !== "chromium", "the Layout Instability API is Chromium-only");
     await page.addInitScript(() => {

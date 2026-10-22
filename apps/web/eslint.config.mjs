@@ -9,5 +9,5 @@ import { defineConfig, globalIgnores } from "eslint/config";
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "node_modules/**", "next-env.d.ts", "tools/**"]),
+  globalIgnores([".next/**", "node_modules/**", "next-env.d.ts", "tools/**", "playwright-report/**", "test-results/**", "blob-report/**"]),
 ]);

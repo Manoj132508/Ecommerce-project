@@ -91,15 +91,15 @@ test.describe("sessions and privacy", () => {
 
     await page.goto(`/orders/${snapshotOrder}`);
     await expect(page.getByRole("heading", { name: "Discontinued Lamp" })).toBeVisible();
-    await expect(page.getByText("Saved unit price: $43.21")).toBeVisible();
+    await expect(page.getByText("Price paid: $43.21 each")).toBeVisible();
     await expect(page.getByText(/^Status: delivered$/i)).toBeVisible();
     await page.getByRole("button", { name: "Buy Discontinued Lamp again" }).click();
     await expect(page.getByRole("main").getByRole("alert")).toHaveText("Discontinued Lamp is no longer available and cannot be added to your cart.");
 
     await page.goto(`/orders/${legacyOrder}`);
-    await expect(page.getByRole("heading", { name: "Product information unavailable" })).toBeVisible();
-    await expect(page.getByText(/^Status: Not recorded for this legacy order$/i)).toBeVisible();
-    await expect(page.getByText("Historical unit price unavailable")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Product details not recorded" })).toBeVisible();
+    await expect(page.getByText(/^Status: not recorded \(older order\)$/i)).toBeVisible();
+    await expect(page.getByText("Price paid not recorded")).toBeVisible();
     expectCleanPage(problems, { allow: [/404 \(Not Found\)/] });
   });
 });

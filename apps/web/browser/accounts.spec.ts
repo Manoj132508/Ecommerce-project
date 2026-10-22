@@ -7,16 +7,19 @@ test.describe("accounts", () => {
     await page.getByRole("link", { name: "Register" }).click();
     await expect(page).toHaveURL(/\/register\?from=%2Fproducts%3Fq%3Dsun$/);
 
-    // Labels work, and validation messages are announced before anything is sent.
+    // Labels work; each validation message is tied to its field (accessible
+    // description) and focus moves to the first problem before anything is sent.
     await page.getByLabel("Name").fill(customer.name);
     await page.getByLabel("Email").fill(customer.email);
-    await page.getByLabel("Password", { exact: true }).fill("short");
-    await page.getByLabel("Confirm password").fill("different");
+    const password = page.getByLabel("Password", { exact: true });
+    const confirm = page.getByLabel("Confirm password");
+    await password.fill("short");
+    await confirm.fill("different");
     await page.getByRole("button", { name: "Create account" }).click();
-    await expect(page.getByRole("main").getByRole("alert")).toHaveText("Passwords do not match");
-    await page.getByLabel("Confirm password").fill("short");
-    await page.getByRole("button", { name: "Create account" }).click();
-    await expect(page.getByRole("main").getByRole("alert")).toHaveText("Password must be at least 8 characters");
+    await expect(password).toBeFocused();
+    await expect(password).toHaveAccessibleDescription("At least 8 characters. Use at least 8 characters.");
+    await expect(confirm).toHaveAccessibleDescription("Passwords do not match.");
+    await expect(confirm).toHaveAttribute("aria-invalid", "true");
 
     await page.getByLabel("Password", { exact: true }).fill(customer.password);
     await page.getByLabel("Confirm password").fill(customer.password);

@@ -202,6 +202,56 @@ async function productionChecks(origin, pool) {
     check(`private page ${pagePath.split("?")[0]}: Cache-Control no-store`, page.status === 200 && /no-store/.test(page.headers["cache-control"] ?? "") && !/public|s-maxage/.test(page.headers["cache-control"] ?? ""), `${page.status} ${page.headers["cache-control"]}`);
   }
 
+  // Admin (Phase 5G): role checks on the pages and the API, private responses,
+  // catalogue refresh after a product change, audited status changes.
+  check("admin page: signed out → sign-in with return path", (await request(`${origin}/admin`)).headers.location?.includes("/login?from=%2Fadmin"));
+  check("admin page: a customer gets a 404", (await request(`${origin}/admin/orders`, { jar: browser })).status === 404);
+  check("admin API: a customer cannot create products (403)", (await api("POST", "/products", { name: "x" }, { "X-CSRF-Token": csrf })).status === 403);
+  check("admin API: a customer cannot change order status (403)", (await api("PATCH", `/orders/${orderId}/status`, { status: "processing", reason: "x" }, { "X-CSRF-Token": csrf })).status === 403);
+  check("admin API: a customer cannot read the order history (403)", (await api("GET", `/orders/${orderId}/status-events`)).status === 403);
+
+  const admin = new CookieJar(undefined, { prefixSecurity: "strict" });
+  const adminApi = (method, apiPath, body, headers = {}) => request(`${origin}/api${apiPath}`, { method, body, jar: admin, headers: { Origin: origin, ...headers } });
+  const adminEmail = `admin-${Date.now()}@example.com`;
+  await adminApi("POST", "/auth/accounts", { name: "Ada Admin", email: adminEmail, password: "admin-password-1" });
+  await pool.query("UPDATE users SET is_admin = true WHERE email = $1", [adminEmail]);
+  const adminCsrf = (await adminApi("POST", "/auth/session", { email: adminEmail, password: "admin-password-1" })).json?.csrfToken ?? "";
+  for (const adminPath of ["/admin", "/admin/products", "/admin/products/new", `/admin/products/${PRODUCTS[0][0]}`, "/admin/orders", `/admin/orders/${orderId}`]) {
+    const page = await request(`${origin}${adminPath}`, { jar: admin });
+    check(`admin page ${adminPath.replace(/[0-9a-f-]{36}/, ":id")}: 200, private, noindex`, page.status === 200 && /no-store/.test(page.headers["cache-control"] ?? "")
+      && page.text.includes('name="robots" content="noindex, nofollow"'), `${page.status} ${page.headers["cache-control"]}`);
+  }
+  const dashboard = await request(`${origin}/admin`, { jar: admin });
+  check("admin dashboard shows live counts", dashboard.text.includes(">Products<") && dashboard.text.includes(`>${PRODUCTS.length}<`));
+
+  await request(`${origin}/`); // fill the storefront's 60 s catalogue cache
+  const lamp = await adminApi("POST", "/products", {
+    name: "E2E Lamp", price: "12.34", category: "Home", stock: "3", image: "images/products/luxury-towel-set.jpg",
+    description: "A lamp.", howItWorks: "Switch it on.", highlights: "Warm light", careInstructions: "Dust it.", keywords: "lamp, light",
+  }, { "X-CSRF-Token": adminCsrf });
+  check("admin creates a product with keywords through the proxy", lamp.status === 201 && JSON.stringify(lamp.json?.keywords) === '["lamp","light"]'
+    && /no-store/.test(lamp.headers["cache-control"] ?? ""));
+  const refreshed = await request(`${origin}/products?q=light`);
+  check("the storefront shows the new product at once (catalogue cache refreshed), found by its keyword", refreshed.text.includes(">E2E Lamp<"));
+  const edited = await adminApi("PUT", `/products/${lamp.json?.id}`, {
+    name: "E2E Lamp", price: "15.00", category: "Home", stock: "3", image: "images/products/luxury-towel-set.jpg",
+    description: "A lamp.", howItWorks: "Switch it on.", highlights: "Warm light", careInstructions: "Dust it.",
+  }, { "X-CSRF-Token": adminCsrf });
+  check("an edit without keywords keeps them", edited.status === 200 && JSON.stringify(edited.json?.keywords) === '["lamp","light"]' && edited.json?.priceCents === 1500);
+  check("admin deletes the product; the storefront drops it at once",
+    (await adminApi("DELETE", `/products/${lamp.json?.id}`, undefined, { "X-CSRF-Token": adminCsrf })).status === 200
+    && !(await request(`${origin}/`)).text.includes(">E2E Lamp<"));
+
+  check("status change without a reason is refused (400)", (await adminApi("PATCH", `/orders/${orderId}/status`, { status: "processing", reason: " " }, { "X-CSRF-Token": adminCsrf })).status === 400);
+  check("a skipped transition is refused (409)", (await adminApi("PATCH", `/orders/${orderId}/status`, { status: "delivered", reason: "skip" }, { "X-CSRF-Token": adminCsrf })).status === 409);
+  const moved = await adminApi("PATCH", `/orders/${orderId}/status`, { status: "processing", reason: "Packed" }, { "X-CSRF-Token": adminCsrf });
+  const events = await adminApi("GET", `/orders/${orderId}/status-events`);
+  check("admin status change is audited with the reason and keeps the total", moved.status === 200 && moved.json?.totalCostCents === orders.json?.[0]?.totalCostCents
+    && events.json?.at(-1)?.reason === "Packed" && events.json?.at(-1)?.changedBy?.name === "Ada Admin" && /no-store/.test(events.headers["cache-control"] ?? ""));
+  check("'Your orders' for an admin lists only their own orders", (await adminApi("GET", "/orders?scope=own")).json?.length === 0
+    && (await adminApi("GET", "/orders")).json?.some((item) => item.id === orderId));
+  check("admin signs out cleanly", (await adminApi("DELETE", "/auth/session", undefined, { "X-CSRF-Token": adminCsrf })).status === 204);
+
   const bobSignedOut = await bobApi("DELETE", "/auth/session", undefined, { "X-CSRF-Token": bobSession.json?.csrfToken ?? "" });
   check("second user signs out cleanly", bobSignedOut.status === 204);
 
@@ -232,7 +282,7 @@ async function productionChecks(origin, pool) {
   }
   const robots = await request(`${origin}/robots.txt`);
   check("robots.txt keeps crawlers out of private pages and the API", robots.status === 200
-    && ["/api/", "/account", "/cart", "/checkout", "/orders", "/tracking"].every((path) => robots.text.includes(`Disallow: ${path}`)), robots.text);
+    && ["/api/", "/account", "/cart", "/checkout", "/orders", "/tracking", "/admin"].every((path) => robots.text.includes(`Disallow: ${path}`)), robots.text);
   const sitemap = await request(`${origin}/sitemap.xml`);
   // NEXT_PUBLIC_SITE_URL is inlined at build time and this build has none: a
   // valid, empty sitemap and no Sitemap line (the listed case is a unit test).

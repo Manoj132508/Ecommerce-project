@@ -11,6 +11,13 @@ export const PRODUCTS = {
 } as const;
 export const PRODUCT_COUNT = 6;
 
+/** Every seeded product is listed. Admin tests may add a product meanwhile, so the count is a minimum. */
+export async function expectSeededCatalogue(page: Page) {
+  await expect(page.getByRole("article").first()).toBeVisible();
+  expect(await page.getByRole("article").count()).toBeGreaterThanOrEqual(PRODUCT_COUNT);
+  for (const { name } of Object.values(PRODUCTS)) await expect(page.getByRole("link", { name, exact: true }).first()).toBeVisible();
+}
+
 const baseURL = () => {
   const url = process.env.BROWSER_E2E_BASE_URL;
   if (!url) throw new Error("BROWSER_E2E_BASE_URL is not set: run through `npm run test:browser`");
