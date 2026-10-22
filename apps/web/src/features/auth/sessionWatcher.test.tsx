@@ -28,6 +28,18 @@ describe("session expiry", () => {
     expect(queryClient.getQueryData(["orders", ALICE._id])).toBeUndefined();
     expect(store.getState().ui.notice).toBe(NOTICES.sessionExpired);
   });
+
+  test("a late expiry on the sign-in page keeps its return path", async () => {
+    window.history.replaceState(null, "", `/login?from=${encodeURIComponent("/orders")}`);
+    fakeApi({});
+    const { queryClient, store } = renderWithProviders(<SessionExpiryWatcher />, { session: SESSION });
+
+    act(() => announceSessionExpired());
+
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(sessionQueryKey)).toBeNull();
+    expect(store.getState().ui.notice).toBe(NOTICES.sessionExpired);
+  });
 });
 
 describe("another tab signs in or out", () => {
