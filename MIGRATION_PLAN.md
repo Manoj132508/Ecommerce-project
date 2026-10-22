@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–3C and Phase 4 (local) committed and pushed. All five domains switched to PostgreSQL on the local development environment only. Frontend security update (R29) done: `npm audit` 0. R31 rollback design and reverse-reconciliation proof of concept done, on disposable databases only. Auth cookie plan (R30) written, not implemented. MongoDB is still the default; no production setting, deployment or production data was touched. Production cutover not started.**
+Status: **Phases 0–4 (local) committed and pushed. Phase 5A (Next.js foundation in `apps/web`) and the 5B cookie-session foundation are done locally on branch `phase5/nextjs-foundation` (not pushed): same-origin `/api` proxy, PostgreSQL sessions (migration 0004), HttpOnly cookies with CSRF and Origin checks, disabled by default and refused in production. The Vite app and the legacy JWT login are unchanged. MongoDB is still the production default; nothing was deployed and no production setting or data was touched. Page migration awaits approval.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -242,11 +242,15 @@ Field-level conversions:
 | R27 | JSON key order of products whose MongoDB document lacked `stock` differs between stores (MongoDB puts `stock` first) | Low | Key order has no meaning in JSON; content verified equal on real data (23/23). The MongoDB path itself is byte-identical to before (48/48) |
 | R28 | The transaction-local flag that authorises `change_order_status()` can be set by any session with the application's database role | Low | It guards against accidental direct updates, not a compromised application. Every change is still audited in `order_status_events` (append-only) |
 | R29 | Frontend `npm audit`: 16 advisories (1 critical via `axios` → `form-data`; high in `axios`, `react-router`/`turbo-stream`, and lint/build tooling) | ~~High~~ **Resolved (2026-10-22, `69a47e0`)** | `axios` 1.8.4 → 1.20.0 (`form-data` 4.0.6, `follow-redirects` 1.16.1), `react-router` 7.1.5 → 7.18.4 (same major; the app uses only the declarative API), `eslint` 9.39.5, plus a non-force `npm audit fix` for transitive dev tooling. No major upgrades. **`npm audit`: 0** (production-only: 0). Frontend tests 47/47 (3 new open-redirect cases), typecheck, lint and build pass |
-| R30 | The bearer token is kept in `localStorage` (unchanged since before the migration), so an XSS bug could read it | Medium | Not weakened or moved; never stored in Redux. **Plan written: "Auth hardening plan (R30)" below** (HttpOnly session cookie behind a same-origin `/api` proxy, CSRF and Origin checks, revocable sessions, a migration window for existing tokens). Not implemented; decide before Phase 5 so the Next.js app is not built on `localStorage` |
+| R30 | The bearer token is kept in `localStorage` (unchanged in the Vite app), so an XSS bug could read it | Medium | **Foundation implemented (Phase 5B, off by default):** PostgreSQL sessions, an HttpOnly `__Host-` cookie on the Next.js origin, CSRF and Origin checks, revocation, rotation, and the exchange endpoint for existing tokens. The Vite app still uses `localStorage` until it is replaced. Production activation needs the conditions in §6 Phase 5 ("Conditions before the legacy bearer tokens can be removed") |
 | R31 | **Rollback limit.** Records written after a domain switches to PostgreSQL (new users, orders, carts, status changes, catalogue edits) do not exist in MongoDB; rolling that domain back hides them (verified: a PostgreSQL-only user gets 401 after rollback) | **High (production)** | **Strategy and proof of concept done (2026-10-22), see "Production cutover and recovery design (R31)" in §6 Phase 4.** Rollback after writes resume is allowed only through reverse reconciliation plus the readiness gate, which refuses any MongoDB that lacks a PostgreSQL record. 10/10 tests on disposable databases. Production use needs a guarded CLI, a rehearsal and approval; until then the no-rollback rule applies once writes resume |
 | R32 | After a switch, `data:verify` reports MISMATCH by design (PostgreSQL gains new rows) | Low | Verified locally: all 47 copied records still match field for field; only additions appear as "unexpected". Use verify **before** each switch; afterwards, PostgreSQL is authoritative |
 | R33 | A Phase 4 smoke-test log printed the first 44 characters of a JWT issued by the **local** development server to the synthetic local test account `phase4-alice@example.com` | Low | **Investigated (2026-10-22): not a credential exposure.** The 44 characters were the fixed HS256 header (`{"alg":"HS256","typ":"JWT"}`, identical for every token) plus `.eyJpZCI` (`{"id"`). No user id, expiry or signature was printed, and the token cannot be rebuilt without `JWT_SECRET`. Neither `JWT_SECRET` nor the PostgreSQL password appears in any log, report, scratch file or git history (scanned). The account exists only in local PostgreSQL. No rotation needed. Prevention: the repository's tests and scripts print no tokens (checked); ad-hoc scripts must drop `token` before printing a response |
 | R34 | A reconciliation process that dies mid-run leaves its run lock in `reconciliation_runs` | Low | Intended: an overlapping run could race on product updates. The readiness gate reports "a reconciliation run is in progress". Remove the lock by hand once no run is active, then re-run (runs are idempotent) |
+| R35 | `eslint-config-next` (via `@next/eslint-plugin-next` → `fast-glob` → `micromatch`) pulls in `braces` ≤3.0.3: unpatched stack-exhaustion DoS (GHSA-vfj7-8cjw-p6xm). No fixed release exists; npm's only fix is a downgrade to Next 14 lint rules | Low (dev tooling only) | Not installed. `apps/web` lints with the Vite app's stack (`@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`), so `npm audit` is 0, but Next.js-specific lint rules are missing. Re-add once `braces` is patched |
+| R36 | A request from an Origin outside the CORS allow-list gets **500** (the `cors()` origin callback raises an error, handled by Express's default error handler) instead of 403. Pre-existing; affects legacy and cookie requests alike | Low–Medium | The request is still refused before any route runs (tested), but a 500 is misleading, and outside `NODE_ENV=production` the default handler includes a stack trace. Fix separately (map CORS rejections to 403 JSON), because it changes a legacy response. Required before cookie-session activation |
+| R37 | No rate limiting on login (legacy `/api/auth/login` or `/api/auth/session`): password guessing is limited only by bcrypt cost | Medium | Pre-existing. Add per-IP and per-account throttling (edge or middleware) before production activation of cookie sessions |
+| R38 | Locally, cookies are not port-scoped (RFC 6265): the dev session cookie on `localhost:3001` is also sent to Express on `localhost:3000` | Low (local only) | Writes still need Origin and the CSRF token (tested). In production the API runs on a different host, so the `__Host-` cookie never reaches it directly (tested in the HTTPS-equivalent run) |
 
 ### Approved decisions (2026-10-21)
 
@@ -265,7 +269,7 @@ Recorded during Phase 2 and **not implemented in Phase 2**, because Phase 2 must
 - **FD2 — API errors are safe JSON.** Every error response is `{ "message": string }` with a fixed, non-internal message: no raw `error.message` (today cart/order/delivery 500s leak it, and so does R18), no HTML pages, no stack traces. This includes a JSON 404 for unknown routes, a JSON 400 for malformed bodies and a JSON 403 for disallowed CORS origins (R15). Details are logged server-side only. Supersedes the old step 2.5. Suggested timing: a dedicated commit before Phase 4, so every Postgres-backed domain inherits it.
 - **FD3 — Product edits keep search keywords unless explicitly updated.** `PUT /api/products/:id` stops replacing `keywords` with `[category]`. Keywords change only when the request includes them. Create keeps today's default (`[category]`) when none are sent (R16). Suggested timing: Phase 4.2 (products cut-over).
 
-### Auth hardening plan (R30): HttpOnly session cookie (planned, not implemented)
+### Auth hardening plan (R30): HttpOnly session cookie (foundation implemented in Phase 5B; see §6 Phase 5 for what was built and how it differs)
 
 **Today:** `POST /api/auth/login|register` returns a 30-day HS256 JWT in the body. The SPA keeps it in `localStorage` and sends `Authorization: Bearer`. CORS is an exact allow-list without credentials. The SPA (`*.vercel.app`) and the API (Render) are **different sites**: both suffixes are on the Public Suffix List.
 
@@ -713,33 +717,169 @@ In those cases recovery is forward-fix on PostgreSQL:
 
 ### Phase 5 — Next.js frontend in `apps/web` (Vite stays live)
 
-- [ ] 5.1 `create-next-app` in `apps/web` (TypeScript, App Router, Tailwind v4, ESLint, `src/` dir)
-- [ ] 5.2 Copy `public/images`, `src/types`, `src/services/api.ts`, `src/queries`, `src/store`, `src/slices`, `src/utils`; `VITE_API_URL` → `NEXT_PUBLIC_API_URL`; `import.meta.env` → `process.env`
-- [ ] 5.3 `next.config.ts` rewrites `/api/:path*` → API origin (replaces Vite proxy; keeps same-origin, no CORS change)
-- [ ] 5.4 `app/providers.tsx` (`'use client'`): Redux store created once per client via `useRef(makeStore())`, `QueryClient` via `useState`
-- [ ] 5.5 Route map (pages start as client components wrapping the existing page code):
+**5A and the 5B authentication foundation: DONE locally (2026-10-22) on branch `phase5/nextjs-foundation` (not pushed, not merged).** Nothing was deployed. The Vite app and the legacy JWT login are unchanged. Cookie sessions are off unless `AUTH_COOKIE_SESSIONS=true`, and the API refuses to start with them under `NODE_ENV=production`. Full page migration has **not** started and awaits approval.
 
-  | React Router | Next App Router |
-  | --- | --- |
-  | `index` | `app/page.tsx` |
-  | `products/:productId` | `app/products/[productId]/page.tsx` |
-  | `login`, `register` | `app/login/page.tsx`, `app/register/page.tsx` |
-  | `admin` | `app/admin/page.tsx` |
-  | `checkout` | `app/checkout/page.tsx` (own layout: checkout header, no main `Header`) |
-  | `order-confirmation` | `app/order-confirmation/page.tsx` |
-  | `product-unavailable` | `app/product-unavailable/page.tsx` — replace `location.state.productName` with `?productName=` |
-  | `orders` | `app/orders/page.tsx` |
-  | `tracking` | `app/tracking/page.tsx` — wrap `useSearchParams` user in `<Suspense>` |
-  | `*` → Home | `app/not-found.tsx` (decide: render Home or a 404) |
+#### 5A — What exists in `apps/web`
 
-- [ ] 5.6 Replace `react-router` APIs: `Link` → `next/link` (`to` → `href`), `useNavigate` → `useRouter().push/replace`, `<Navigate>` → `router.replace` in effect, `useParams`/`useSearchParams` from `next/navigation`
-- [ ] 5.7 Fix relative asset paths (`images/ratings/...` → `/images/ratings/...`); drop `<base href="/">`; move Roboto to `next/font`; `<title>` → `metadata`/`generateMetadata`
-- [ ] 5.8 Deploy `apps/web` as a **new** Vercel project (preview URL); add its origin to `CLIENT_URL`
-- [ ] 5.9 Run the full feature checklist (§2) on the preview, desktop and mobile widths
-- [ ] 5.10 Optional follow-ups after parity: Server Components for product list/detail (public data); httpOnly cookie auth (removes R9)
+| Package | Version | Note |
+| --- | --- | --- |
+| `next` | 16.4.0 | App Router, Turbopack build; newest release older than 14 days; `npm audit` 0 |
+| `react`, `react-dom` | 19.3.0 | |
+| `@tanstack/react-query` | 5.104.1 | server state |
+| `@reduxjs/toolkit`, `react-redux` | 2.13.0, 9.3.0 | UI state only |
+| `tailwindcss`, `@tailwindcss/postcss` | 4.3.3 | |
+| `typescript` | 6.0.3 | strict, `noUncheckedIndexedAccess` (same major as the backend) |
+| `eslint` + `typescript-eslint` + `eslint-plugin-react-hooks` | 9.39.5, 8.71.1, 5.1.0 | same stack as the Vite app; `eslint-config-next` deliberately not used (R35) |
+| `vitest`, `tough-cookie`, `server-only` | 5.0.5, 6.0.2, 0.0.1 | tests; browser-like cookie jar for the end-to-end check; build-time guard for server-only modules |
 
-**Acceptance:** `next build` green with no type errors; every feature in §2 passes on the preview URL; Lighthouse/mobile layout no worse than Vite.
-**Rollback:** the Vite deployment is untouched; nothing to roll back until the domain switch in Phase 7.
+```
+apps/web/
+  next.config.ts              security headers, no X-Powered-By
+  scripts/auth-proxy-e2e.mjs  end-to-end proxy + cookie test (throwaway PostgreSQL)
+  src/app/                    layout, page (placeholder home), login/, loading, error, global-error, not-found
+  src/app/api/[...path]/      the same-origin API proxy (route handler)
+  src/components/             SiteHeader, SessionStatus
+  src/features/auth/          session API (validated), hooks (TanStack), LoginForm
+  src/features/catalog/       product preview (proves the /api path)
+  src/hooks/                  useReturnPath
+  src/lib/                    api client, env (typed + validated), proxy, query keys, safeReturnPath
+  src/providers/              AppProviders: Redux store + QueryClient, one instance per tree
+  src/store/                  makeStore, uiSlice (notices only), typed hooks
+```
+
+State rule (unchanged from the Vite app): products, cart, orders and the signed-in user live **only** in the TanStack Query cache. Redux holds UI state; today that is one notice. The CSRF token sits in the session query and never in Redux or browser storage. User-scoped query keys are cleared whenever the identity changes.
+
+#### Vite → Next.js incompatibilities found
+
+1. **Router.** `BrowserRouter`, `Routes`, `Link`, `Navigate`, `useNavigate`, `useLocation`, `useParams` and `useSearchParams` come from `react-router`; they become `next/link` and `next/navigation`. `useSearchParams` needs a `<Suspense>` boundary.
+2. **`location.state` has no Next.js equivalent.** It is used in 5 places: the login and register return path, `/product-unavailable` (`productName`), `AuthSessionWatcher` and `useRequireLogin`. Use query parameters instead (`?from=` is already done in `apps/web`). The values stay validated (`safeReturnPath`).
+3. **Module-level singletons.** `store` and the `QueryClient` are created at module load. On a Next.js server that would share state between requests, so they must be created per tree (done in `AppProviders`).
+4. **Bearer token in `localStorage`, the axios interceptor and the `storage`-event watcher** are replaced by the HttpOnly cookie session, same-origin `fetch`, and (later) `BroadcastChannel` for cross-tab sign-out.
+5. **`import.meta.env.VITE_API_URL`** becomes the server-only `BACKEND_ORIGIN`; the browser only ever calls `/api` on its own origin.
+6. **Browser-only APIs during render.** `window.confirm`, `window.scrollTo` and `document.getElementById` must live in Client Components and event handlers or effects.
+7. **The `*` route renders the home page** today. Next.js `not-found.tsx` answers 404 instead; the foundation does this, pending approval (see the mapping).
+8. **15 MB of images in `ecommerce-project/public/images`.** They are needed by Next.js (`/images/...`); copy them or serve from shared storage when pages move (decision).
+9. **Tests.** `MemoryRouter`-based page tests and `msw` handlers need `next/navigation` test doubles when pages move.
+10. **Registration** still returns a JWT (legacy). Cookie-session registration needs a decision: a new `POST /api/auth/session/register`, or register followed by sign-in.
+
+#### Route-by-route mapping (pages not migrated yet)
+
+| Vite route | Vite component | Next.js route | Rendering plan | Access | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `/` | `HomePage` (grid, search) | `app/page.tsx` (placeholder now) | Server shell + client grid (TanStack); server prefetch later | public | search term: URL `?q=` or Redux `home` slice (UI state) |
+| `/products/:productId` | `OneProductPage` | `app/products/[productId]/page.tsx` | dynamic, `generateMetadata` | public | validate the UUID; `notFound()` |
+| `/login` | `LoginPage` | `app/login/page.tsx` (**done, cookie session**) | client form | public | `?from=` replaces `location.state` |
+| `/register` | `RegisterPage` | `app/register/page.tsx` | client form | public | needs the registration decision (item 10 above) |
+| `/admin` | `AdminDashboard` | `app/admin/page.tsx` + layout guard | client | admin | the API keeps enforcing `adminOnly`; the UI guard is convenience only |
+| `/checkout` | `CheckoutPage` | `app/checkout/page.tsx` | client | signed in (per-user carts) | 401 → `/login?from=/checkout` |
+| `/order-confirmation` | `OrderConfirmationPage` | `app/order-confirmation/page.tsx` | client | signed in | |
+| `/product-unavailable` | `ProductUnavailablePage` | `app/product-unavailable/page.tsx` | static + client | public | `?productName=` instead of `location.state` (render as text only) |
+| `/orders` | `OrdersPage` | `app/orders/page.tsx` | client | signed in | |
+| `/tracking` | `TrackingPage` | `app/tracking/page.tsx` | client inside `<Suspense>` | signed in | `?orderId&productId` |
+| `*` | `HomePage` | `app/not-found.tsx` (**done**) | static | public | **behaviour change**: 404 instead of home; approve or revert |
+
+#### Same-origin API proxy
+
+The browser calls `/api/*` on the Next.js host. The route handler `src/app/api/[...path]/route.ts` forwards to `BACKEND_ORIGIN`, using the rules in `src/lib/proxy/backendProxy.ts`. A handler was chosen over `next.config` rewrites because rewrites forward almost every header unfiltered and give no control over `Set-Cookie`.
+
+- **Fixed target.** Only `/api/*` paths, appended to the one validated `BACKEND_ORIGIN` (exact origin, no credentials or path; https unless loopback). It refuses traversal (`..`), empty segments, backslashes, encoded `.`, `/`, `\` and NUL, and control characters, without contacting the API. It cannot reach any other host.
+- **Methods:** GET, HEAD, POST, PUT, PATCH and DELETE; others get 405. Bodies are limited to 1 MiB (413); upstream timeout 15 s (502); an unreachable API returns a generic 502 with no details.
+- **Request headers (allow-list):** `Accept`, `Accept-Language`, `Authorization` (for the legacy token exchange), `Content-Type`, `If-None-Match`, `If-Modified-Since`, `Origin` (Express checks it), `User-Agent` and `X-CSRF-Token`. It never forwards `Host`, hop-by-hop headers, `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, `Referer` or `Proxy-*`. Of the cookies, only `__Host-ecom_session` and `ecom_dev_session` are forwarded.
+- **Response headers (allow-list):** content and caching headers only. `Set-Cookie` passes only for the session cookies, and **any `Set-Cookie` with a `Domain` attribute is dropped**, as is a `__Host-` cookie without `Secure` or `Path=/`. Every cookie is therefore host-only on the browser-facing origin. Redirects from the API are not followed or passed on (502). `X-Powered-By`, `Server`, `Location`, CORS headers and `Content-Encoding` are not passed on.
+- **Forwarded headers.** Express does not trust `X-Forwarded-*` (`trust proxy` stays off). The cookie's `Secure` flag comes from configuration, never from the request. The proxy does not send forwarded headers at all.
+
+**Local vs HTTPS behaviour**
+
+| | Local development | HTTPS (production design, HTTPS-equivalent test) |
+| --- | --- | --- |
+| Browser origin | `http://localhost:3001` (or `http://127.0.0.1:3001`) | `https://<next-host>` |
+| Express setting | `AUTH_COOKIE_SECURE=false`, `AUTH_ALLOWED_ORIGINS=http://localhost:3001` | `AUTH_COOKIE_SECURE=true` (default), `AUTH_ALLOWED_ORIGINS=https://<next-host>` |
+| Cookie | `ecom_dev_session`: HttpOnly, SameSite=Lax, Path=/, no Secure | `__Host-ecom_session`: HttpOnly, Secure, SameSite=Lax, Path=/, no Domain |
+| Scope | host-only, but cookies are **not port-scoped**: it also reaches Express on the same host, where writes still need Origin and the CSRF token (tested) | host-only on the Next.js host; never sent to the API host directly |
+| Why two names | Safari, and any device or LAN testing over `http://<ip>`, will not store a `Secure` cookie without HTTPS (Chrome and Firefox treat `http://localhost` as secure) | — |
+
+**How to test the proxy**
+- Unit tests: `npm test` in `apps/web` (75 tests), against a real local HTTP upstream.
+- End to end: build both apps, then run `npm run test:e2e` in `apps/web`. It uses Docker and openssl and starts a throwaway PostgreSQL container that is removed afterwards. It runs the real `next start` and the compiled Express, and checks both the local HTTP scenario and an HTTPS-equivalent one: a local TLS terminator in front of Next.js, as the hosting edge terminates TLS. Result: **52/52**.
+
+#### 5B — Cookie-session architecture (implemented, disabled by default)
+
+- **Storage:** migration `0004_auth_sessions`.
+  - Columns: `id`, `token_hash` (SHA-256, 32 bytes, unique), `user_id` (FK to `users`, cascade), `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `revoked_reason` and `user_agent` (512 characters at most).
+  - A trigger keeps the id, token hash, user, creation time and absolute expiry immutable, and makes revocation one-way.
+  - Indexes support active sessions per user and cleanup.
+  - The data-migration rollback now refuses while sessions exist and truncates them with the users.
+- **Tokens:** 32 random bytes (`crypto.randomBytes`), base64url. Only the hash is stored, and the raw token is never in a response body, the logs or the frontend state (tested). The CSRF token is `HMAC-SHA256(key = session token, "ecommerce csrf v1")`: it needs no storage and is not derivable from the database.
+- **Endpoints** (mounted only when enabled; otherwise 404):
+
+| Endpoint | Purpose | Protection |
+| --- | --- | --- |
+| `POST /api/auth/session` | sign in (email, password) through the same `users.authenticate` (bcrypt) as the legacy login; **rotates** any session the browser presented | Origin allow-list, JSON only (login CSRF) |
+| `GET /api/auth/session` | `{ user, csrfToken }`; `Cache-Control: no-store` | session cookie |
+| `DELETE /api/auth/session` | sign out this browser: revoke, clear the cookie | cookie + Origin + CSRF |
+| `DELETE /api/auth/sessions` | sign out everywhere (this user's sessions) | cookie + Origin + CSRF |
+| `POST /api/auth/session/exchange` | migration: a valid legacy bearer token becomes a cookie session | Origin allow-list + bearer token |
+
+- **Application routes:**
+  - The existing `protect` middleware accepts a session cookie when **no** `Authorization: Bearer` header is present. A bearer token always takes the unchanged legacy path, so the Vite app behaves exactly as before.
+  - Cookie-authenticated POST, PUT, PATCH and DELETE need an allowed `Origin` **and** the matching `X-CSRF-Token`. Both are checked before any database access, so a refused request changes nothing (tested on cart, order-status and logout).
+  - Ownership and `adminOnly` checks are untouched (tested).
+- **Expiry and renewal:**
+  - Idle timeout 7 days, extended on use at most every 15 minutes, never past the absolute lifetime of 30 days. All comparisons use the database clock.
+  - Expired, revoked or unknown tokens get 401 and the cookie is cleared.
+  - Cleanup is deliberate, never automatic: `npm run sessions:cleanup` counts; `-- --confirm` deletes sessions that finished more than 7 days ago (`--retention-days N`).
+- **Configuration** (`auth/config.ts`; any invalid value stops start-up):
+  - `AUTH_COOKIE_SESSIONS` (`true` enables) needs `DATA_SOURCE_USERS=postgres` and is refused with `NODE_ENV=production`.
+  - `AUTH_COOKIE_SECURE` defaults to `true`; with it, every entry in `AUTH_ALLOWED_ORIGINS` must be https.
+  - `AUTH_ALLOWED_ORIGINS`: exact origins, also added to the CORS allow-list.
+  - `AUTH_SESSION_IDLE_HOURS`, `AUTH_SESSION_ABSOLUTE_HOURS`.
+- **Dependency:** sessions reference users in PostgreSQL, so production activation can only follow the production users cutover. An R31 rollback does not reconcile sessions; everyone is signed out, which is acceptable.
+- **Tests:** `test/db/authSessions.test.ts` has 38 tests, plus migrator updates. Mutation checks: removing the CSRF check, the Origin check, rotation, the revocation filter, `Secure`, the login Origin check, the idle-expiry filter, or token hashing each fails at least one test.
+
+#### Local development commands (Windows PowerShell)
+
+```powershell
+# Express with cookie sessions (LOCAL ONLY). Migration 0004 is new: back up the
+# local PostgreSQL first (db/README.md "Backups"), then apply it.
+cd ecommerce-backend
+npm.cmd run db:migrate
+$env:DATA_SOURCE_DELIVERY_OPTIONS = "postgres"; $env:DATA_SOURCE_PRODUCTS = "postgres"; $env:DATA_SOURCE_USERS = "postgres"
+$env:DATA_SOURCE_CARTS = "postgres"; $env:DATA_SOURCE_ORDERS = "postgres"
+$env:AUTH_COOKIE_SESSIONS = "true"; $env:AUTH_COOKIE_SECURE = "false"; $env:AUTH_ALLOWED_ORIGINS = "http://localhost:3001"
+npm.cmd run dev                 # http://localhost:3000; log shows "Cookie sessions: enabled (local HTTP development cookie)"
+
+# Next.js (second terminal)
+cd apps/web
+Copy-Item .env.example .env.local   # BACKEND_ORIGIN=http://127.0.0.1:3000
+npm.cmd run dev                 # open http://localhost:3001 (the origin must match AUTH_ALLOWED_ORIGINS exactly)
+
+# Checks
+npm.cmd test; npm.cmd run typecheck; npm.cmd run lint; npm.cmd run build
+npm.cmd run test:e2e            # after building ecommerce-backend and apps/web; needs Docker
+
+# The Vite app is unchanged: cd ecommerce-project; npm.cmd run dev  (http://localhost:5173, bearer tokens)
+# Turn cookie sessions off again: Remove-Item Env:AUTH_COOKIE_SESSIONS
+```
+
+The local development database does **not** have 0004 applied yet. With any PostgreSQL domain selected, the API refuses to start until `db:migrate` runs, as it does for every migration.
+
+#### Conditions before the legacy bearer tokens can be removed
+
+1. The Next.js storefront has replaced the Vite app in production (Phase 7), and no client sends bearer tokens. Measure this: log the count of bearer-authenticated requests, not the tokens.
+2. Cookie sessions are enabled in production. That needs: an owner decision; production users on PostgreSQL (cutover); `AUTH_COOKIE_SECURE=true` with the production Next.js origin; a login rate limit (R37); the CORS rejection handled as 403 (R36); and session cleanup scheduled.
+3. A migration window of at least the JWT lifetime (30 days) after step 1, with the exchange endpoint available, so signed-in users move without a forced sign-in. The window is set when step 1 happens; no deadline is enforced now.
+4. Then: remove the bearer path from `protect`, the exchange endpoint and `token` from the legacy responses, and **rotate `JWT_SECRET`** to invalidate any token still outstanding.
+
+#### Remaining Phase 5 work (awaiting approval)
+
+- [ ] Migrate the pages per the mapping, with tests (jsdom and `next/navigation` doubles), one feature at a time.
+- [ ] Decisions: `*` → 404; image hosting (copy 15 MB vs shared storage); cookie-session registration.
+- [ ] Port the session-expiry UX (`AuthSessionWatcher`: 401 → sign-in with return path) and cross-tab sign-out (`BroadcastChannel`).
+- [ ] Re-add `eslint-config-next` once `braces` is patched (R35).
+- [ ] Preview deployment as a **new** Vercel project (needs approval; `BACKEND_ORIGIN` set server-side; Express `AUTH_ALLOWED_ORIGINS` unchanged in production until activation).
+
+**Acceptance (foundation):** met. `next build`, typecheck and lint pass; 75 unit and 52 end-to-end checks pass; the backend suites are green; the Vite app checks are green.
+**Rollback:** delete `apps/web` and revert the backend commit. With `AUTH_COOKIE_SESSIONS` unset, the backend behaves exactly as before. Migration 0004 has a down file. Production is untouched.
 
 ### Phase 6 — shadcn/ui (after parity, component by component)
 
@@ -833,10 +973,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Pushed to `origin/migration/postgres`: everything through Phase 4 (local, `4b1131e`) and the frontend security update (`69a47e0`). This stage also commits the R31 proof of concept and this plan update. **Production cutover has not started; nothing was deployed.**
+`origin/migration/postgres` holds everything through Phase 4 and the R29/R31 work (`49806d5`). Phase 5A and the 5B foundation are committed on the local branch `phase5/nextjs-foundation` and are **not pushed or merged**. Nothing was deployed.
 
-1. Owner: review and decide the R30 auth cookie plan (§4), preferably before Phase 5 starts.
-2. Owner: accept the R31 recovery design, including the no-rollback rule once writes resume without an approved reconciliation tool.
-3. Before any production switch: build the write-freeze mode and a production-guarded reconciliation CLI (dry-run first, `--confirm`, local-only unless explicitly allowed), then rehearse on restored copies of production dumps.
-4. Owner: production prerequisites. Production MongoDB provider, Render Postgres instance, freeze window. Then apply the documented Render settings and deploy with all domains on MongoDB.
-5. Phase 5 (Next.js) only with explicit approval.
+1. Owner: review `phase5/nextjs-foundation` and approve pushing it.
+2. Owner: decide the Phase 5 items: `*` → 404, image hosting, cookie-session registration.
+3. Before cookie sessions can ever be enabled in production: R36 (CORS 403), R37 (login rate limit), production users on PostgreSQL (cutover), and approval.
+4. With approval: migrate the pages one feature at a time per the route mapping, then a preview deployment as a new Vercel project.
+5. Still open from earlier phases: the R31 production-readiness items (write freeze, guarded reconciliation CLI, rehearsal) and the production prerequisites in §6 Phase 4.
