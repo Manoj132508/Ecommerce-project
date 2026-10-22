@@ -14,6 +14,9 @@ describe('safeReturnPath', () => {
   test.each([
     ['//evil.example', 'protocol-relative URL'],
     ['/\\evil.example', 'backslash trick'],
+    ['\\\\evil.example', 'leading backslashes'],
+    ['\\/evil.example', 'mixed backslash and slash'],
+    ['/\t/evil.example', 'tab between slashes'],
     ['https://evil.example/checkout', 'absolute URL'],
     ['javascript:alert(1)', 'script URL'],
     ['checkout', 'relative path'],
