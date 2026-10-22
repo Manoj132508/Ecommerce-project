@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import jwt, { type JwtPayload } from "jsonwebtoken";
 import type { AuthUser, UserRepository } from "../repositories/types.js";
+import { createSessionGuard, readSessionCookie, type SessionAuth } from "../auth/sessionAuth.js";
 import { errorMessage } from "../utils/errors.js";
 import { isUserId } from "../utils/identifiers.js";
 
@@ -13,8 +14,24 @@ const hasUserId = (decoded: string | JwtPayload): decoded is AuthTokenPayload =>
   typeof decoded !== "string" && typeof decoded.id === "string"
 );
 
-/** Verifies the bearer token and attaches the user, from whichever store holds users. */
-export const createProtect = (users: UserRepository): RequestHandler => async (req, res, next) => {
+/**
+ * Verifies the bearer token and attaches the user, from whichever store holds users.
+ * With cookie sessions enabled, a request that has no bearer token but has a
+ * session cookie is authenticated by the session guard instead (CSRF-checked).
+ * A bearer token always takes the legacy path, so the Vite app is unaffected.
+ */
+export const createProtect = (users: UserRepository, sessionAuth?: SessionAuth): RequestHandler => {
+  const sessionGuard = sessionAuth ? createSessionGuard(users, sessionAuth) : undefined;
+  return (req, res, next) => {
+    const hasBearer = /^Bearer\s+\S+$/i.test(req.get("Authorization") ?? "");
+    if (!hasBearer && sessionGuard && sessionAuth && readSessionCookie(req, sessionAuth.config.cookieName)) {
+      return sessionGuard(req, res, next);
+    }
+    return protectWithBearer(users, req, res, next);
+  };
+};
+
+const protectWithBearer = async (users: UserRepository, ...[req, res, next]: Parameters<RequestHandler>) => {
   const authorization = req.get("Authorization");
   const bearerToken = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
 

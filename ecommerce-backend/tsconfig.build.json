@@ -13,6 +13,7 @@
   },
   "include": [
     "app.ts",
+    "auth/**/*.ts",
     "server.ts",
     "config/**/*.ts",
     "controllers/**/*.ts",
@@ -23,7 +24,8 @@
     "types/**/*.ts",
     "utils/**/*.ts",
     "scripts/dbMigrate.ts",
-    "scripts/dataMigrate.ts"
+    "scripts/dataMigrate.ts",
+    "scripts/sessionsCleanup.ts"
   ],
   "exclude": ["node_modules", "dist", "test"]
 }

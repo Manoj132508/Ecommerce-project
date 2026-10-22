@@ -11,6 +11,9 @@ import {
   usesPostgres,
 } from "./config/dataSources.js";
 import { verifySchemaCurrent } from "./db/pool.js";
+import { loadSessionAuthConfig } from "./auth/config.js";
+import type { SessionAuth } from "./auth/sessionAuth.js";
+import { PostgresSessionRepository } from "./auth/sessionRepository.js";
 import { createRepositories } from "./repositories/index.js";
 import { errorMessage } from "./utils/errors.js";
 
@@ -46,7 +49,16 @@ async function startServer() {
       console.log(`Data sources: ${describeDataSources(dataSources)}`);
     }
 
-    const app = createApp({ repositories: createRepositories(dataSources, pool) });
+    // Cookie sessions: development only, off unless AUTH_COOKIE_SESSIONS=true.
+    let sessionAuth: SessionAuth | undefined;
+    const sessionConfig = loadSessionAuthConfig(process.env, dataSources);
+    if (sessionConfig) {
+      if (!pool) throw new Error("PostgreSQL pool missing");
+      sessionAuth = { config: sessionConfig, sessions: new PostgresSessionRepository(pool, sessionConfig) };
+      console.log(`Cookie sessions: enabled (${sessionConfig.secureCookie ? "Secure __Host- cookie" : "local HTTP development cookie"})`);
+    }
+
+    const app = createApp({ repositories: createRepositories(dataSources, pool), sessionAuth });
 
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);

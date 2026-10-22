@@ -20,6 +20,16 @@ export interface AuthResponse extends UserProfile {
   token: string;
 }
 
+/**
+ * Cookie-session responses (/api/auth/session). The session token itself is
+ * only ever in the HttpOnly cookie, never in a body.
+ */
+export interface SessionResponse {
+  user: UserProfile;
+  /** Send back in X-CSRF-Token on POST, PUT, PATCH and DELETE. */
+  csrfToken: string;
+}
+
 export interface ProductRating {
   stars: number;
   count: number;

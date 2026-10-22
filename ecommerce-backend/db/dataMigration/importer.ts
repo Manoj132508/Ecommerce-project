@@ -409,15 +409,16 @@ export async function rollbackImportedData(
       await assertSchemaCurrent(client, options.migrationsDirectory);
       await client.query("BEGIN");
       try {
-        const { rows: [appData] } = await client.query<{ carts: number; cart_items: number; new_orders: number; status_events: number }>(
+        const { rows: [appData] } = await client.query<{ carts: number; cart_items: number; new_orders: number; status_events: number; sessions: number }>(
           `SELECT (SELECT count(*) FROM carts)::int AS carts,
                   (SELECT count(*) FROM cart_items)::int AS cart_items,
                   (SELECT count(*) FROM orders WHERE NOT is_legacy)::int AS new_orders,
-                  (SELECT count(*) FROM order_status_events)::int AS status_events`,
+                  (SELECT count(*) FROM order_status_events)::int AS status_events,
+                  (SELECT count(*) FROM auth_sessions)::int AS sessions`,
         );
-        if (!appData || appData.carts + appData.cart_items + appData.new_orders + appData.status_events > 0) {
+        if (!appData || appData.carts + appData.cart_items + appData.new_orders + appData.status_events + appData.sessions > 0) {
           throw new Error(
-            "PostgreSQL holds application data (carts, non-legacy orders or order status changes); refusing to remove it. Restore a backup instead.",
+            "PostgreSQL holds application data (carts, non-legacy orders, order status changes or sign-in sessions); refusing to remove it. Restore a backup instead.",
           );
         }
 
@@ -440,8 +441,9 @@ export async function rollbackImportedData(
                   (SELECT count(*) FROM users)::int AS users, (SELECT count(*) FROM products)::int AS products,
                   (SELECT count(*) FROM delivery_options)::int AS delivery_options`,
         );
-        // order_status_events is verified empty above; it is listed because it references orders.
-        await client.query("TRUNCATE order_status_events, order_items, orders, cart_items, carts, users, products, delivery_options");
+        // order_status_events and auth_sessions are verified empty above; they are
+        // listed because they reference orders and users.
+        await client.query("TRUNCATE auth_sessions, order_status_events, order_items, orders, cart_items, carts, users, products, delivery_options");
         await client.query("COMMIT");
         return counts ?? {};
       } catch (error) {

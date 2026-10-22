@@ -22,6 +22,7 @@
     "data:import": "tsx scripts/dataMigrate.ts import",
     "data:verify": "tsx scripts/dataMigrate.ts verify",
     "data:rollback": "tsx scripts/dataMigrate.ts rollback",
+    "sessions:cleanup": "tsx scripts/sessionsCleanup.ts",
     "migrate:product-descriptions": "tsx scripts/populateProductDescriptions.ts",
     "migrate:product-categories": "tsx scripts/populateProductCategories.ts",
     "test": "vitest run",

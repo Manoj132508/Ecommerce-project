@@ -8,17 +8,21 @@ import productRoutes from "./routes/productRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import sessionRoutes from "./routes/sessionRoutes.js";
+import type { SessionAuth } from "./auth/sessionAuth.js";
 
 export interface AppOptions {
   /** Data access per domain. Defaults to MongoDB for every domain. */
   repositories?: Repositories;
+  /** Cookie sessions (AUTH_COOKIE_SESSIONS). Absent: bearer tokens only, as before. */
+  sessionAuth?: SessionAuth;
 }
 
 // Builds the Express app without connecting to a database or opening a port,
 // so tests can exercise it in-process. Call after environment variables load.
-export function createApp({ repositories = createRepositories() }: AppOptions = {}): Express {
+export function createApp({ repositories = createRepositories(), sessionAuth }: AppOptions = {}): Express {
   const app = express();
-  const protect = createProtect(repositories.users);
+  const protect = createProtect(repositories.users, sessionAuth);
 
   // Permit the local Vite app and the deployed storefront to call this API.
   // CLIENT_URL can contain a comma-separated list when more frontends are added.
@@ -30,6 +34,8 @@ export function createApp({ repositories = createRepositories() }: AppOptions = 
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
+    // The Next.js host forwards the browser's Origin through its /api proxy.
+    ...(sessionAuth?.config.allowedOrigins ?? []),
   ]);
 
   app.use(
@@ -58,6 +64,9 @@ export function createApp({ repositories = createRepositories() }: AppOptions = 
   });
 
   // Routes
+  if (sessionAuth) {
+    app.use("/api/auth", sessionRoutes(repositories, sessionAuth));
+  }
   app.use("/api/auth", authRoutes(repositories, protect));
   app.use("/api", productRoutes(repositories, protect));
   app.use("/api", cartRoutes(repositories, protect));

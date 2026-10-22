@@ -26,6 +26,15 @@ declare global {
       DATA_SOURCE_ORDERS?: string;
       /** Must be "true" to select PostgreSQL while NODE_ENV=production. */
       POSTGRES_PRODUCTION_ENABLED?: string;
+      /** "true" enables cookie sessions (development only; auth/config.ts). */
+      AUTH_COOKIE_SESSIONS?: string;
+      /** "true" (default): __Host- Secure cookie; "false": local HTTP development cookie. */
+      AUTH_COOKIE_SECURE?: string;
+      /** Comma-separated exact browser origins allowed to use cookie sessions. */
+      AUTH_ALLOWED_ORIGINS?: string;
+      /** Session idle timeout and absolute lifetime, in hours. */
+      AUTH_SESSION_IDLE_HOURS?: string;
+      AUTH_SESSION_ABSOLUTE_HOURS?: string;
       NODE_ENV?: string;
     }
   }
