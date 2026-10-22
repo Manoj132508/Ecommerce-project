@@ -99,13 +99,14 @@ export function parseOrder(value: unknown): Order {
 }
 
 export async function fetchOrders(): Promise<Order[]> {
-  const data = await apiFetch("/orders?expand=products");
+  // scope=own: "Your orders" is personal, also for an administrator (the admin area lists every order).
+  const data = await apiFetch("/orders?scope=own&expand=products");
   if (!Array.isArray(data)) throw new ApiError(502, "Unexpected orders response from the API.");
   return data.map(parseOrder);
 }
 
 export const fetchOrder = async (orderId: string) => parseOrder(
-  await apiFetch(`/orders/${encodeURIComponent(orderId)}?expand=products`),
+  await apiFetch(`/orders/${encodeURIComponent(orderId)}?scope=own&expand=products`),
 );
 
 export const createOrder = async (customer: CustomerDetails, csrfToken: string, idempotencyKey: string) => parseOrder(

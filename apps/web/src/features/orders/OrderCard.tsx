@@ -16,7 +16,7 @@ export function OrderCard({ order, detailed = false }: { order: Order; detailed?
     <article className="overflow-hidden rounded-lg border bg-white shadow-sm">
       <header className="grid gap-3 bg-slate-50 px-4 py-4 text-sm sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-5">
         <div><span className="block font-semibold">Order placed</span>{formatOrderTime(order.orderTimeMs)}</div>
-        <div><span className="block font-semibold">Stored total</span>{formatMoney(order.totalCostCents)}</div>
+        <div><span className="block font-semibold">Order total</span>{formatMoney(order.totalCostCents)}</div>
         <div className="min-w-0 sm:text-right">
           <span className="block font-semibold">Order ID</span><span className="break-all">{order.id}</span>
           {!detailed && (
@@ -29,15 +29,15 @@ export function OrderCard({ order, detailed = false }: { order: Order; detailed?
       <div className="divide-y px-4 sm:px-5">
         {order.products.map((line, index) => (
           <div key={`${line.productId}-${index}`} className="grid gap-4 py-5 sm:grid-cols-[96px_1fr_auto] sm:items-center">
-            {line.product ? <ProductImage product={line.product} sizes="112px" className="w-28 sm:w-full" /> : <div className="flex aspect-square w-28 items-center justify-center rounded bg-slate-100 p-2 text-center text-xs text-slate-500 sm:w-full">Historical product unavailable</div>}
+            {line.product ? <ProductImage product={line.product} sizes="112px" className="w-28 sm:w-full" /> : <div className="flex aspect-square w-28 items-center justify-center rounded bg-slate-100 p-2 text-center text-xs text-slate-500 sm:w-full">Image not available</div>}
             <div>
-              <h2 className="font-bold">{line.product?.name ?? "Product information unavailable"}</h2>
+              <h2 className="font-bold">{line.product?.name ?? "Product details not recorded"}</h2>
               <p className="text-sm text-slate-600">Quantity: {line.quantity}</p>
               <p className="text-sm text-slate-600">Expected: {formatDeliveryDate(line.estimatedDeliveryTimeMs)}</p>
               {line.product && !isCurrentProduct(line.product) ? (
-                <p className="text-sm font-medium">Saved unit price: {formatMoney(line.product.priceCents)}</p>
+                <p className="text-sm font-medium">Price paid: {formatMoney(line.product.priceCents)} each</p>
               ) : (
-                <p className="text-sm text-slate-500">Historical unit price unavailable</p>
+                <p className="text-sm text-slate-500">Price paid not recorded</p>
               )}
             </div>
             <div className="grid gap-2 sm:w-44">

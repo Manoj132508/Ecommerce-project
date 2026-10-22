@@ -4,12 +4,26 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { useReturnPath } from "@/hooks/useReturnPath";
+import { ApiError } from "@/lib/api/client";
 import { useAppDispatch } from "@/store/hooks";
 import { noticeShown } from "@/store/uiSlice";
+import { describedBy, fieldClass, FieldError, looksLikeEmail } from "./fields";
 import { useCreateAccount } from "./hooks";
 import { NOTICES } from "./notices";
 
-const inputClass = "rounded-md border border-slate-300 px-3 py-2 font-normal";
+type Field = "name" | "email" | "password" | "confirmPassword";
+type RegisterErrors = Partial<Record<Field, string>>;
+const ORDER: Field[] = ["name", "email", "password", "confirmPassword"];
+
+/** The same checks as the Vite form (the API validates again), one message per field. */
+function validate(values: Record<Field, string>): RegisterErrors {
+  return {
+    name: values.name.trim() ? undefined : "Enter your name.",
+    email: !values.email.trim() ? "Enter your email address." : !looksLikeEmail(values.email) ? "Enter an email address such as name@example.com." : undefined,
+    password: values.password.length < 8 ? "Use at least 8 characters." : undefined,
+    confirmPassword: !values.confirmPassword ? "Enter the password again." : values.confirmPassword !== values.password ? "Passwords do not match." : undefined,
+  };
+}
 
 /**
  * Creates the account, then sends the user to the normal cookie-session
@@ -20,56 +34,66 @@ export function RegisterForm() {
   const returnPath = useReturnPath();
   const dispatch = useAppDispatch();
   const createAccount = useCreateAccount();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [validationError, setValidationError] = useState("");
-
+  const [values, setValues] = useState<Record<Field, string>>({ name: "", email: "", password: "", confirmPassword: "" });
+  const [errors, setErrors] = useState<RegisterErrors>({});
   const loginHref = returnPath === "/" ? "/login" : `/login?from=${encodeURIComponent(returnPath)}`;
+
+  // An address that is already registered belongs to the email field; other failures to the form.
+  const emailTaken = createAccount.error instanceof ApiError && createAccount.error.status === 409;
+  const fieldError = (field: Field) => errors[field] ?? (field === "email" && emailTaken ? createAccount.error?.message : undefined);
+  const formError = createAccount.isError && !emailTaken ? createAccount.error.message : "";
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setValidationError("");
-    // The same checks as the Vite form; the API validates again.
-    if (password !== confirmPassword) {
-      setValidationError("Passwords do not match");
+    const found = validate(values);
+    setErrors(found);
+    const first = ORDER.find((field) => found[field]);
+    if (first) {
+      document.getElementById(`register-${first}`)?.focus();
       return;
     }
-    if (password.length < 8) {
-      setValidationError("Password must be at least 8 characters");
-      return;
-    }
-    createAccount.mutate({ name, email, password }, {
+    createAccount.mutate({ name: values.name, email: values.email, password: values.password }, {
       onSuccess: () => {
         dispatch(noticeShown(NOTICES.accountCreated));
         router.push(loginHref);
       },
+      onError: (error) => document.getElementById(error instanceof ApiError && error.status === 409 ? "register-email" : "register-form-error")?.focus(),
     });
   };
 
-  const error = validationError || (createAccount.isError ? createAccount.error.message : "");
+  const input = (field: Field, label: string, props: { type: string; autoComplete: string; hint?: string }) => {
+    const message = fieldError(field);
+    return (
+      <div className="flex flex-col gap-1 text-sm font-medium">
+        <label htmlFor={`register-${field}`}>{label}</label>
+        {props.hint && <span id={`register-${field}-hint`} className="font-normal text-slate-600">{props.hint}</span>}
+        <input
+          id={`register-${field}`}
+          type={props.type}
+          autoComplete={props.autoComplete}
+          required
+          value={values[field]}
+          onChange={(event) => {
+            const { value } = event.target;
+            setValues((current) => ({ ...current, [field]: value }));
+            setErrors((current) => ({ ...current, [field]: undefined }));
+          }}
+          aria-invalid={message ? true : undefined}
+          aria-describedby={describedBy(props.hint && `register-${field}-hint`, message && `register-${field}-error`)}
+          className={fieldClass}
+        />
+        <FieldError id={`register-${field}-error`} message={message} />
+      </div>
+    );
+  };
 
   return (
     <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-sm flex-col gap-4" noValidate>
-      {error && <p role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-      <label className="flex flex-col gap-1 text-sm font-medium">
-        Name
-        <input type="text" autoComplete="name" required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
-      </label>
-      <label className="flex flex-col gap-1 text-sm font-medium">
-        Email
-        <input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} />
-      </label>
-      <div className="flex flex-col gap-1 text-sm font-medium">
-        <label htmlFor="register-password">Password</label>
-        <input id="register-password" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} className={inputClass} aria-describedby="password-help" />
-        <span id="password-help" className="font-normal text-slate-500">At least 8 characters.</span>
-      </div>
-      <label className="flex flex-col gap-1 text-sm font-medium">
-        Confirm password
-        <input type="password" autoComplete="new-password" required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className={inputClass} />
-      </label>
+      {formError && <p id="register-form-error" tabIndex={-1} role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{formError}</p>}
+      {input("name", "Name", { type: "text", autoComplete: "name" })}
+      {input("email", "Email", { type: "email", autoComplete: "email" })}
+      {input("password", "Password", { type: "password", autoComplete: "new-password", hint: "At least 8 characters." })}
+      {input("confirmPassword", "Confirm password", { type: "password", autoComplete: "new-password" })}
       <button
         type="submit"
         disabled={createAccount.isPending}

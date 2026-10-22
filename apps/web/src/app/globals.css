@@ -5,3 +5,15 @@
     @apply bg-white text-slate-900 antialiased;
   }
 }
+
+/*
+ * Windows high contrast (forced colours) replaces background colours, so
+ * buttons and fields drawn only with a fill would lose their outline. A
+ * system-coloured border keeps every control's boundary visible. Unlayered,
+ * so it also wins over utilities such as border-0.
+ */
+@media (forced-colors: active) {
+  button, input, select, textarea {
+    border: 1px solid ButtonText;
+  }
+}

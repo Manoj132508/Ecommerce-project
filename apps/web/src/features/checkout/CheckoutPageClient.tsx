@@ -158,14 +158,14 @@ export function CheckoutPageClient({ user }: { user: SessionUser }) {
         )}
 
         <aside className="rounded-lg border bg-white p-5 shadow-sm lg:sticky lg:top-4">
-          <h2 className="mb-4 text-xl font-bold">Authoritative total</h2>
+          <h2 className="mb-4 text-xl font-bold">Order summary</h2>
           <dl className="space-y-2">
             <div className="flex justify-between"><dt>Items ({summary.totalItems})</dt><dd>{formatMoney(summary.productCostCents)}</dd></div>
             <div className="flex justify-between"><dt>Shipping</dt><dd>{formatMoney(summary.shippingCostCents)}</dd></div>
             <div className="flex justify-between"><dt>Tax</dt><dd>{formatMoney(summary.taxCents)}</dd></div>
             <div className="flex justify-between border-t pt-3 text-lg font-bold text-[#08783e]"><dt>Total</dt><dd>{formatMoney(summary.totalCostCents)}</dd></div>
           </dl>
-          <p className="mt-4 text-xs text-slate-500">Prices and totals are recalculated by the server when the order is placed.</p>
+          <p className="mt-4 text-xs text-slate-500">Prices are checked again when you place the order.</p>
         </aside>
       </div>
     </div>

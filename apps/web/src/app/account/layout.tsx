@@ -16,7 +16,7 @@ export default async function AccountLayout({ children }: { children: ReactNode 
 
   return (
     <div className="grid gap-6 md:grid-cols-[200px_1fr]">
-      <nav aria-label="Account sections" className="flex gap-2 md:flex-col">
+      <nav aria-label="Account sections" className="flex flex-wrap gap-2 md:flex-col">
         <Link href="/account" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Profile</Link>
         <Link href="/orders" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Orders</Link>
         <Link href="/cart" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Cart</Link>

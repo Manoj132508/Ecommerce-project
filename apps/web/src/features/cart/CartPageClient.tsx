@@ -87,7 +87,7 @@ export function CartPageClient() {
 
         <aside className="rounded-lg border bg-white p-5 shadow-sm lg:sticky lg:top-4">
           <h2 className="mb-4 text-xl font-bold">Order summary</h2>
-          {checkout.isPending && <p>Calculating authoritative totals…</p>}
+          {checkout.isPending && <p>Calculating totals…</p>}
           {checkout.isError && <p role="alert" className="text-red-700">{checkout.error.message}</p>}
           {summary && (
             <dl className="space-y-2">

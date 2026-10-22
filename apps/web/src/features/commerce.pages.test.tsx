@@ -196,12 +196,12 @@ describe("orders", () => {
     renderWithProviders(<OrderDetailsClient initialOrder={order} />, { session: SESSION });
     expect(screen.getByRole("heading", { name: "Order confirmed" })).toBeInTheDocument();
     expect(screen.getByText("Your order was recorded successfully. No payment was processed.")).toBeInTheDocument();
-    expect(screen.getByText(/Saved unit price:/)).toHaveTextContent("$33.90");
+    expect(screen.getByText(/Price paid:/)).toHaveTextContent("$33.90 each");
   });
 
   test("buy again adds one to the cart with the CSRF token, and every line can be tracked", async () => {
     const order = snapshotOrder(product.id, product.name);
-    const { requests } = fakeApi({ ...routes(), "POST /api/cart-items": { status: 201, body: cartLine }, "GET /api/orders?expand=products": { status: 200, body: [order] } });
+    const { requests } = fakeApi({ ...routes(), "POST /api/cart-items": { status: 201, body: cartLine }, "GET /api/orders?scope=own&expand=products": { status: 200, body: [order] } });
     const { user } = renderWithProviders(<OrdersPageClient />, { session: SESSION });
     await user.click(await screen.findByRole("button", { name: `Buy ${product.name} again` }));
     expect(await screen.findByText("Added to your cart")).toBeInTheDocument();
@@ -234,7 +234,7 @@ describe("orders", () => {
   test("buying a deleted product again explains it on the order line", async () => {
     const gone = "99999999-9999-4999-8999-999999999999";
     const order = snapshotOrder(gone, "Retired Kettle");
-    fakeApi({ "POST /api/cart-items": { status: 404, body: { message: "Product not found" } }, "GET /api/orders?expand=products": { status: 200, body: [order] } });
+    fakeApi({ "POST /api/cart-items": { status: 404, body: { message: "Product not found" } }, "GET /api/orders?scope=own&expand=products": { status: 200, body: [order] } });
     const { user } = renderWithProviders(<OrdersPageClient />, { session: SESSION });
     expect(await screen.findByRole("heading", { name: "Retired Kettle" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Buy Retired Kettle again" }));

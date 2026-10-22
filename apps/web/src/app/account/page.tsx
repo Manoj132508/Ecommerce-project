@@ -16,7 +16,7 @@ export default async function AccountPage() {
         <dt className="font-medium text-slate-600">Name</dt>
         <dd>{user.name}</dd>
         <dt className="font-medium text-slate-600">Email</dt>
-        <dd>{user.email}</dd>
+        <dd className="break-all">{user.email}</dd>
         <dt className="font-medium text-slate-600">Account type</dt>
         <dd>{user.isAdmin ? "Administrator" : "Customer"}</dd>
       </dl>

@@ -8,11 +8,11 @@ export type ServerOrderResult =
   | { kind: "signed-out" }
   | { kind: "not-found" };
 
-/** Ownership is checked by Express. This request is private and never cached. */
+/** The signed-in user's own order (also for an admin: scope=own). Ownership is checked by Express; never cached. */
 export async function getServerOrder(orderId: string): Promise<ServerOrderResult> {
   const cookie = await getServerSessionCookieHeader();
   if (!cookie) return { kind: "signed-out" };
-  const response = await fetch(new URL(`/api/orders/${encodeURIComponent(orderId)}?expand=products`, serverEnv().backendOrigin), {
+  const response = await fetch(new URL(`/api/orders/${encodeURIComponent(orderId)}?scope=own&expand=products`, serverEnv().backendOrigin), {
     headers: { Accept: "application/json", Cookie: cookie },
     cache: "no-store",
   });

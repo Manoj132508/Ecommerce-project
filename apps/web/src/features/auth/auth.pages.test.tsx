@@ -50,6 +50,31 @@ describe("sign-in page", () => {
     await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/"));
   });
 
+  test("empty or malformed fields are explained on the fields themselves; nothing is sent", async () => {
+    const { requests } = fakeApi({});
+    const { user } = renderWithProviders(<LoginForm />, { session: null });
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter your email address.");
+    expect(screen.getByLabelText("Email")).toHaveFocus();
+    expect(screen.getByLabelText("Password")).toHaveAccessibleDescription("Enter your password.");
+    await user.type(screen.getByLabelText("Email"), "nora");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter an email address such as name@example.com.");
+    expect(requests).toEqual([]);
+  });
+
+  test("rejected credentials mark both fields and are linked to them", async () => {
+    fakeApi({ "POST /api/auth/session": { status: 401, body: { message: "Invalid email or password" } } });
+    const { user } = renderWithProviders(<LoginForm />, { session: null });
+    await user.type(screen.getByLabelText("Email"), "a@example.com");
+    await user.type(screen.getByLabelText("Password"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Invalid email or password"));
+    expect(screen.getByLabelText("Password")).toHaveAccessibleDescription("Invalid email or password");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Email")).toHaveFocus();
+  });
+
   test("shows the server's message for wrong credentials and for rate limiting", async () => {
     const answers = [{ status: 401, body: { message: "Invalid email or password" } }, { status: 429, body: { message: "Too many attempts. Please wait a few minutes and try again." } }];
     fakeApi({ "POST /api/auth/session": () => answers.shift() ?? { status: 500 } });
@@ -96,22 +121,47 @@ describe("registration page", () => {
     expect(browserStorageSnapshot(queryClient, store)).not.toContain("nora-password-1");
   });
 
-  test("client-side checks: matching passwords of at least 8 characters, before anything is sent", async () => {
+  test("client-side checks: each message is tied to its field and focused, before anything is sent", async () => {
     const { requests } = fakeApi({});
     const { user } = renderWithProviders(<RegisterForm />, { session: null });
     await fill(user, "password-1", "password-2");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Passwords do not match");
+    const confirm = screen.getByLabelText("Confirm password");
+    expect(confirm).toHaveAttribute("aria-invalid", "true");
+    expect(confirm).toHaveAccessibleDescription("Passwords do not match.");
+    expect(confirm).toHaveFocus();
+
     await user.clear(screen.getByLabelText("Password"));
-    await user.clear(screen.getByLabelText("Confirm password"));
+    await user.clear(confirm);
     await user.type(screen.getByLabelText("Password"), "short");
-    await user.type(screen.getByLabelText("Confirm password"), "short");
+    await user.type(confirm, "short");
     await user.click(screen.getByRole("button", { name: "Create account" }));
-    expect(await screen.findByText("Password must be at least 8 characters")).toBeInTheDocument();
+    const password = screen.getByLabelText("Password");
+    expect(password).toHaveAccessibleDescription("At least 8 characters. Use at least 8 characters.");
+    expect(password).toHaveFocus();
+    expect(confirm).not.toHaveAttribute("aria-invalid");
+
+    await user.clear(screen.getByLabelText("Name"));
+    await user.clear(screen.getByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "not-an-email");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription("Enter your name.");
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter an email address such as name@example.com.");
     expect(requests).toEqual([]);
   });
 
+  test("an address that is already registered (409) is reported on the email field", async () => {
+    fakeApi({ "POST /api/auth/accounts": { status: 409, body: { message: "User already exists" } } });
+    const { user } = renderWithProviders(<RegisterForm />, { session: null });
+    await fill(user);
+    const email = screen.getByLabelText("Email");
+    await waitFor(() => expect(email).toHaveAccessibleDescription("User already exists"));
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveFocus();
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
   test.each([
-    [409, { message: "User already exists" }, "User already exists"],
     [400, { message: "Provide a name, valid email, and password of at least 8 characters (maximum 72 bytes)" }, "Provide a name, valid email"],
     [429, { message: "Too many attempts. Please wait a few minutes and try again." }, "Too many attempts"],
     [500, { message: "Server error" }, "Server error"],
