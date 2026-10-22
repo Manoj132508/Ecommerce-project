@@ -10,7 +10,7 @@
 //
 // Prerequisites: Docker; `npm run build` in ecommerce-backend and apps/web.
 //   npm run test:pages     (from apps/web)
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CookieJar } from "tough-cookie";
@@ -165,7 +165,44 @@ async function productionChecks(origin, pool) {
   const account = await request(`${origin}/account`, { jar: browser });
   check("account page shows the profile (server-rendered with the session cookie)", account.status === 200 && account.text.includes("Your account") && account.text.includes(email));
 
-  const signedOut = await api("DELETE", "/auth/session", undefined, { "X-CSRF-Token": signedIn.json?.csrfToken ?? "" });
+  // Cart, checkout and orders through the real proxy and compiled API.
+  const csrf = signedIn.json?.csrfToken ?? "";
+  const added = await api("POST", "/cart-items", { productId: PRODUCTS[0][0], quantity: 2 }, { "X-CSRF-Token": csrf });
+  check("cart: authenticated add with CSRF", added.status === 201 && added.json?.quantity === 2);
+  const cart = await api("GET", "/cart-items?expand=product");
+  check("cart: private no-store response and expanded product", cart.status === 200 && cart.json?.[0]?.product?.name === PRODUCTS[0][1]
+    && cart.headers["cache-control"]?.includes("private") && cart.headers["cache-control"]?.includes("no-store"));
+  check("cart page: authenticated direct URL", (await request(`${origin}/cart`, { jar: browser })).status === 200);
+  check("checkout page: authenticated direct URL", (await request(`${origin}/checkout`, { jar: browser })).status === 200);
+
+  // A second browser has its own empty cart and cannot access Nora's orders.
+  const bob = new CookieJar(undefined, { prefixSecurity: "strict" });
+  const bobApi = (method, apiPath, body, headers = {}) => request(`${origin}/api${apiPath}`, { method, body, jar: bob, headers: { Origin: origin, ...headers } });
+  const bobEmail = `bob-${Date.now()}@example.com`;
+  await bobApi("POST", "/auth/accounts", { name: "Bob", email: bobEmail, password: "bob-password-1" });
+  const bobSession = await bobApi("POST", "/auth/session", { email: bobEmail, password: "bob-password-1" });
+  check("two users: second user starts with a separate empty cart", bobSession.status === 200 && (await bobApi("GET", "/cart-items")).json?.length === 0);
+
+  const checkoutKey = randomUUID();
+  const place = () => api("POST", "/orders", { customer: { fullName: "Nora", email, phone: "07123", address: "1 High Street", city: "London", postalCode: "N1 1AA", country: "United Kingdom" } }, { "X-CSRF-Token": csrf, "Idempotency-Key": checkoutKey });
+  const placed = await Promise.all([place(), place(), place()]);
+  const orderIds = placed.map((response) => response.json?.id);
+  check("checkout: simultaneous same-key requests create/replay one order", placed.every((response) => response.status === 201) && new Set(orderIds).size === 1, JSON.stringify(placed.map((response) => response.status)));
+  const orderId = orderIds[0];
+  const orderRows = await pool.query("SELECT count(*)::int AS count FROM orders WHERE checkout_key = $1", [checkoutKey]);
+  check("checkout: exactly one database order for the key", orderRows.rows[0]?.count === 1);
+  const orders = await api("GET", "/orders?expand=products");
+  check("orders: owner sees stored snapshot and private no-store response", orders.status === 200 && orders.json?.[0]?.products?.[0]?.product?.priceCents === 1000
+    && orders.headers["cache-control"]?.includes("no-store"));
+  const orderPage = await request(`${origin}/orders/${orderId}?placed=1`, { jar: browser });
+  check("order detail: owner gets server-checked page", orderPage.status === 200 && orderPage.text.includes("Order details") && orderPage.text.includes(String(orderId)));
+  const guessed = await request(`${origin}/orders/${orderId}`, { jar: bob });
+  check("order detail: another user gets a real 404", guessed.status === 404 && guessed.text.includes("Order not found"), String(guessed.status));
+
+  const bobSignedOut = await bobApi("DELETE", "/auth/session", undefined, { "X-CSRF-Token": bobSession.json?.csrfToken ?? "" });
+  check("second user signs out cleanly", bobSignedOut.status === 204);
+
+  const signedOut = await api("DELETE", "/auth/session", undefined, { "X-CSRF-Token": csrf });
   check("sign out (CSRF-protected)", signedOut.status === 204 && (await browser.getCookies(origin)).length === 0);
   const after = await request(`${origin}/account`, { jar: browser });
   check("account after sign-out redirects again", [303, 307, 308].includes(after.status));

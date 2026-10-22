@@ -51,6 +51,7 @@ const FORWARDED_REQUEST_HEADERS = [
   "content-type",
   "if-modified-since",
   "if-none-match",
+  "idempotency-key",
   // The browser's Origin: Express checks it for CSRF protection.
   "origin",
   "user-agent",

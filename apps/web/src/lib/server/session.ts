@@ -6,13 +6,18 @@ import { parseSession, type SessionUser } from "@/features/auth/api";
 import { serverEnv } from "@/lib/env/server";
 import { SESSION_COOKIE_NAMES } from "@/lib/proxy/backendProxy";
 
-export async function getServerSessionUser(): Promise<SessionUser | null> {
+export async function getServerSessionCookieHeader(): Promise<string | null> {
   const jar = await cookies();
   const cookie = [...SESSION_COOKIE_NAMES].map((name) => jar.get(name)).find((entry) => entry !== undefined);
+  return cookie ? `${cookie.name}=${cookie.value}` : null;
+}
+
+export async function getServerSessionUser(): Promise<SessionUser | null> {
+  const cookie = await getServerSessionCookieHeader();
   if (!cookie) return null;
 
   const response = await fetch(new URL("/api/auth/session", serverEnv().backendOrigin), {
-    headers: { Accept: "application/json", Cookie: `${cookie.name}=${cookie.value}` },
+    headers: { Accept: "application/json", Cookie: cookie },
     cache: "no-store",
   });
   if (response.status === 401) return null;

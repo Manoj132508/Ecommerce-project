@@ -28,6 +28,15 @@ describe("apiFetch", () => {
     });
   });
 
+  test("checkout carries its idempotency key with the CSRF token", async () => {
+    const fetchImpl = fakeFetch(201, { id: "order-1" });
+    await apiFetch("/orders", { method: "POST", body: { fullName: "Manoj" }, csrfToken: "csrf-1", idempotencyKey: "912e7b90-8185-45c7-b6c5-aed8db9db513" }, fetchImpl);
+    expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "Idempotency-Key": "912e7b90-8185-45c7-b6c5-aed8db9db513",
+      "X-CSRF-Token": "csrf-1",
+    });
+  });
+
   test("an unsafe request without a CSRF token is not sent", async () => {
     const fetchImpl = fakeFetch(200, {});
     await expect(apiFetch("/cart-items", { method: "DELETE" }, fetchImpl)).rejects.toBeInstanceOf(ApiError);

@@ -4,8 +4,15 @@
 
 export const sessionQueryKey = ["auth", "session"] as const;
 
-/** The signed-in user's cart (cart pages move here in the next stage). */
 export const cartQueryRoot = ["cart"] as const;
+export const checkoutQueryRoot = ["checkout"] as const;
+export const ordersQueryRoot = ["orders"] as const;
+export const orderQueryRoot = ["order"] as const;
+
+export const cartQueryKey = (userId: string) => ["cart", userId] as const;
+export const checkoutQueryKey = (userId: string) => ["checkout", userId] as const;
+export const ordersQueryKey = (userId: string) => ["orders", userId] as const;
+export const orderQueryKey = (userId: string, orderId: string) => ["order", userId, orderId] as const;
 
 export const USER_SCOPED_ROOTS: readonly string[] = ["cart", "checkout", "orders", "order"];
 

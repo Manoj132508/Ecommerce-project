@@ -100,6 +100,7 @@ describe("request headers", () => {
         Accept: "application/json",
         "Accept-Language": "en-GB",
         Authorization: "Bearer legacy",
+        "Idempotency-Key": "912e7b90-8185-45c7-b6c5-aed8db9db513",
         "User-Agent": "test-agent",
         "X-Forwarded-For": "6.6.6.6",
         "X-Forwarded-Host": "evil.example",
@@ -112,7 +113,7 @@ describe("request headers", () => {
       },
     }));
     const headers = received[0]?.headers ?? {};
-    expect(headers).toMatchObject({ accept: "application/json", "accept-language": "en-GB", authorization: "Bearer legacy", "user-agent": "test-agent" });
+    expect(headers).toMatchObject({ accept: "application/json", "accept-language": "en-GB", authorization: "Bearer legacy", "idempotency-key": "912e7b90-8185-45c7-b6c5-aed8db9db513", "user-agent": "test-agent" });
     for (const name of ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "x-real-ip", "proxy-authorization", "x-custom", "referer"]) {
       expect(headers).not.toHaveProperty(name);
     }

@@ -145,7 +145,7 @@ describe("header session state", () => {
 
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     expect(await screen.findByRole("link", { name: "Sign in" })).toBeInTheDocument();
-    expect(requests).toEqual([expect.objectContaining({ method: "DELETE", path: "/api/auth/session", headers: expect.objectContaining({ "x-csrf-token": SESSION.csrfToken }) })]);
+    expect(requests.filter((request) => request.method === "DELETE")).toEqual([expect.objectContaining({ method: "DELETE", path: "/api/auth/session", headers: expect.objectContaining({ "x-csrf-token": SESSION.csrfToken }) })]);
     expect(queryClient.getQueryData(["cart", ALICE._id])).toBeUndefined();
     expect(navigation.refresh).toHaveBeenCalled();
   });
@@ -161,13 +161,16 @@ describe("header session state", () => {
   test("keyboard: every header control is reachable with Tab", async () => {
     fakeApi({});
     const { user } = renderWithProviders(<SiteHeader />, { session: SESSION });
-    const order: (string | null)[] = [];
-    for (let step = 0; step < 5; step += 1) {
+    const controls = [...document.querySelectorAll<HTMLElement>('a[href], input, button:not([disabled])')];
+    const reached: HTMLElement[] = [];
+    for (let step = 0; step < controls.length; step += 1) {
       await user.tab();
-      order.push(document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent ?? null);
+      reached.push(document.activeElement as HTMLElement);
     }
-    expect(order).toEqual(["Ecommerce", "", "Search", "Alice", "Sign out"]);
-    expect(document.activeElement).toHaveTextContent("Sign out");
+    expect(reached).toEqual(controls);
+    expect(screen.getAllByRole("link", { name: "Cart (0)" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("link", { name: "Checkout" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("link", { name: "Orders" })).not.toHaveLength(0);
   });
 });
 

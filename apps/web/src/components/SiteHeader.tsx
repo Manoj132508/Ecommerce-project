@@ -30,9 +30,9 @@ export function SiteHeader() {
           </button>
         </Form>
 
-        <nav aria-label="Account" className="ml-auto">
+        <div className="ml-auto">
           <SessionStatus />
-        </nav>
+        </div>
       </div>
     </header>
   );
