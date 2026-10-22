@@ -775,7 +775,7 @@ State rule (unchanged from the Vite app): products, cart, orders and the signed-
 | `/products/:productId` | `OneProductPage` | `app/products/[productId]/page.tsx` | dynamic, `generateMetadata` | public | validate the UUID; `notFound()` |
 | `/login` | `LoginPage` | `app/login/page.tsx` (**done, cookie session**) | client form | public | `?from=` replaces `location.state` |
 | `/register` | `RegisterPage` | `app/register/page.tsx` | client form | public | needs the registration decision (item 10 above) |
-| `/admin` | `AdminDashboard` | `app/admin/page.tsx` + layout guard | client | admin | the API keeps enforcing `adminOnly`; the UI guard is convenience only |
+| `/admin` | `AdminDashboard` | `app/admin/**` (**done in 5G**) | server pages + client forms | admin | server role check per page; the API keeps enforcing `adminOnly` |
 | `/checkout` | `CheckoutPage` | `app/checkout/page.tsx` | client | signed in (per-user carts) | 401 → `/login?from=/checkout` |
 | `/order-confirmation` | `OrderConfirmationPage` | `app/order-confirmation/page.tsx` | client | signed in | |
 | `/product-unavailable` | `ProductUnavailablePage` | `app/product-unavailable/page.tsx` | static + client | public | `?productName=` instead of `location.state` (render as text only) |
@@ -1007,7 +1007,7 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 | Images | `public/images` | 35 product + 11 rating images, `next/image`; all decode in Chromium, Firefox, WebKit (browser suite) | Complete |
 | Login / registration | bearer JWT, `location.state` return path | cookie session, `?from=` validated; register then sign in | Intentionally changed |
 | Return path after sign-in | path + search | path + search (header links and session expiry now keep the query; fixed in 5F); foreign/sign-in paths ignored | Complete |
-| Header | name, cart count, orders, admin, logout; mobile menu | account, cart count, preview drawer, checkout, orders, sign out; mobile menu closes on Escape/navigation (5F) | Partial — no admin link (admin not migrated) |
+| Header | name, cart count, orders, admin, logout; mobile menu | account, cart count, preview drawer, checkout, orders, sign out; mobile menu closes on Escape/navigation (5F) | Complete (admin link added in 5G) |
 | Cart / checkout review | `/checkout` (quantities, delivery, summary) | `/cart` + drawer | Complete |
 | Customer details + place order | `/order-confirmation` | `/checkout` two-step review, idempotent; `/order-confirmation` → 307 `/checkout` | Intentionally changed |
 | Unavailable (deleted) products | blocks confirmation; `/product-unavailable` after Buy again | stays visible, blocks checkout; Buy again explains inline; `/product-unavailable` → 307 `/orders` | Intentionally changed |
@@ -1018,8 +1018,8 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 | Session expiry / 401 | notice + login with return path | same, from client 401s and server guards | Complete |
 | Cross-tab sign-in/out | `storage` event | `BroadcastChannel` (one channel per tab, no user data in the message) — **added in 5F** | Complete |
 | Unknown URL | renders home | 404 page | Intentionally changed (approved) |
-| Admin (products CRUD, all orders) | `/admin` | not migrated; still served by Vite; API keeps `adminOnly` | **Missing (planned stage)** |
-| Admin viewing `/orders` | admin tab | `/orders` lists every order for an admin account (API behaviour) under "Your orders" | Partial — label to fix with the admin stage |
+| Admin (products CRUD, all orders) | `/admin` | `/admin`, `/admin/products`, `/admin/orders` — **migrated in 5G** | Complete (see 5G) |
+| Admin viewing `/orders` | admin tab | "Your orders" shows only the admin's own orders (`?scope=own`, 5G); every order is in `/admin/orders` | Complete |
 | Desktop width | grid fills up to 8 columns | content capped at 1024 px (`max-w-5xl`), 5 columns | Partial — visual, left to Phase 6 (spec §2.3) |
 | Dates | browser time zone | fixed store zone `Europe/London` on server and client (hydration-safe) | Intentionally changed |
 
@@ -1065,12 +1065,61 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 
 **Phase 6 proposal:** [`docs/PHASE6_REDESIGN_SPEC.md`](docs/PHASE6_REDESIGN_SPEC.md) — tokens, type scale, components, duplication to remove, page-by-page tasks, accessibility and responsive acceptance criteria. Not implemented.
 
+#### 5G — Admin dashboard and accessibility fixes (2026-10-22, local, not pushed)
+
+5F (`ff4564e`…`11ba8ce`) was re-verified (baseline suites, secret scan) and **pushed without force** (`902dea7..11ba8ce`). Other branches untouched.
+
+**Admin area (`apps/web/src/app/admin`, `src/features/admin`, `src/lib/server/admin.ts`)**
+
+| Route | What it does |
+| --- | --- |
+| `/admin` | Live dashboard: products and categories, orders by status (links to filtered lists), recorded order value without cancelled orders, last 30 days, five most recent orders. Values are recorded totals — no payment provider, stated on the page. |
+| `/admin/products` | List with filter (name, description, category, keywords), image, price, stock and keywords; Edit; Delete with an in-page confirmation (`alertdialog`, focus managed; replaces Vite's `window.confirm`). |
+| `/admin/products/new`, `/admin/products/[id]` | One form for all fields: name, category, price, stock, image path (with preview), description, how it works, care, highlights and **search keywords**; per-field validation matching Express, errors linked to fields. |
+| `/admin/orders` | Every order (admin view), filter by status (including legacy orders without a status). |
+| `/admin/orders/[id]` | Fixed financial record (total, items, prices when ordered, customer), status change form offering only allowed transitions with a **required reason**, and the **audit history** (who, when, why). |
+
+- **Authorisation:** each admin page checks the session and role on the server for every request (the layout and every page — a layout is not re-run on client navigation). Signed out → 307 to sign-in with the return path; signed in without the role → 404 (the area is not advertised). Express enforces `protect` + `adminOnly` on every admin API call (403), and PostgreSQL enforces the transitions, the reason and the append-only history. The UI copies of these rules only decide what is offered.
+- **No admin data in shared caches or the browser cache:** admin pages render per request with the session cookie (`no-store`); admin API responses (`/orders`, `/orders/:id/status-events`, product writes) send `private, no-store`. Admin data is never put in the TanStack Query cache: Server Components load it, client components only send writes and refresh the page.
+- **Catalogue freshness:** a successful product write through the proxy calls `revalidateTag("catalog", { expire: 0 })`, so the storefront shows new, changed and deleted products at once (was up to 60 s).
+- **No new dependencies.**
+
+**Express changes (backwards compatible with the Vite app)**
+1. **Bug fixed — search keywords were lost on every edit.** Create/update always set `keywords` to `[category]`, wiping curated keywords (Vite admin too). Now `keywords` is an optional field (array or comma-separated; trimmed, lower-case, unique, at most 20 of 40 characters). An update without it keeps the stored keywords; a create without it uses the category, as before. *Intentional API difference:* client-supplied keywords are no longer ignored.
+2. `GET /api/orders?scope=own` and `GET /api/orders/:id?scope=own` limit an admin to their own orders (the customer pages use it, so "Your orders" is personal). Without `scope` nothing changes (the Vite admin still lists every order); a customer cannot widen the scope.
+3. New `GET /api/orders/:orderId/status-events` (admin only, private): the append-only audit trail, oldest first, with the changing user's name. MongoDB orders answer 501 (no status model).
+4. Product write responses are `private, no-store`.
+
+**Accessibility (Task 3)**
+- Sign-in and registration: one error per field, linked with `aria-describedby`, `aria-invalid` set, focus moved to the first problem; rejected credentials are linked to both fields; "already registered" (409) is reported on Email. Admin forms follow the same pattern.
+- Customer wording: "Authoritative total" → "Order summary", "Stored total" → "Order total", "Saved unit price" → "Price paid … each", "Historical …" → "Image not available" / "Price paid not recorded" / "Product details not recorded", legacy status → "not recorded (older order)".
+- Found and fixed by the new browser checks: `/account` overflowed by 10 px at 320 px (sub-navigation did not wrap); in Windows high-contrast (forced colours) mode, filled buttons and the header search field lost their boundary (global forced-colours border rule).
+- Verified automatically: keyboard and focus (existing suite), cart drawer focus handling unchanged and still tested, 200 % zoom (683 px) and 320 px reflow on six customer pages, forced-colours borders on four pages, axe on admin dashboard, product form and order pages (0 serious/critical).
+- **Not performed:** screen-reader testing. Checklist: [`docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`](docs/ACCESSIBILITY_MANUAL_CHECKLIST.md) (NVDA + Firefox/Chrome, VoiceOver + iOS Safari, zoom, contrast themes, text spacing).
+
+**Tests and verification for 5G (final run, 2026-10-22)**
+- Backend MongoDB **212 passed, 9 todo** (+1; two baseline tests updated for the keyword fix); PostgreSQL **264/264** (+4: keywords kept/replaced/validated, private product writes, `scope=own` for lists and single orders, audit-trail access and append-only).
+- Next.js unit/component **186/186** (+18: admin rules, server guard on every admin page, product form create/edit/validation, confirmed delete, status form, linked form errors, late session expiry on the sign-in page).
+- Pages e2e **81/81** (+21: admin pages 200/no-store/noindex, customer 403/404, catalogue refreshed after create/edit/delete, keywords kept on edit, 400/409/200 status changes with audit, `scope=own`).
+- Proxy e2e **52/52**. Vite **47/47**; typecheck, lint, builds and `npm audit` 0 in all three packages. Checkout and session code unchanged in 5G (checkout: wording only); idempotency and session tests pass in the PostgreSQL and proxy suites.
+- Browser suite (6 projects; new: admin lifecycle, status change and history, role guard, reflow, forced colours), two full runs on the final build:
+  - run 1: 112 passed, **1 failed** (WebKit mobile, catalogue search — rendering stall, see below), 1 flaky (Firefox), 18 skipped;
+  - run 2: **113 passed, 0 failed, 1 flaky** (Firefox), 18 skipped.
+- **Bug found and fixed (cross-tab sign-out):** signing out in one tab could send the other tab to `/login?from=%2F` instead of `/login?from=%2Forders`. The server guard had already redirected that tab to sign in; a late 401 from its cart query then fired the session-expired handler, which read `/login` as the current page and reset the return path to `/`. `SessionExpiryWatcher` now leaves a tab that is already on a sign-in page where it is (it still ends the local session and shows the notice); unit test added. Stress after the fix: 44/45 across all projects and 28/30 in Firefox — none of the failures was this bug (all were the Firefox stall below).
+- **Open — browser stalls under load (not fixed, root cause not found):** in roughly one in five to fifteen runs of a test, Firefox stops making progress: an `/api/auth/session` response reaches the network layer (200) but its body never reaches the page and no further requests follow, or a `page.evaluate`/locator lookup never returns. Seen in different tests (admin lifecycle, cross-tab sign-out, axe page scan); never in Chromium (0 in 15 repeats per project). WebKit mobile stalled once (a link found but never "stable" — no animation frames) and passed 20/20 in isolation. Firefox admin lifecycle passed 25/25 in isolation with retries off. No timeout was raised; the Firefox retry from 5F stays. Treat Firefox and WebKit as needing the manual pass.
+
+**Remaining gaps after 5G**
+- Parity: none functional. Visual: desktop content width (Phase 6, P8). The admin order list is not paginated (every order loads; fine at current volume — add server pagination before order counts grow). Inventory tracking (`inventory_tracked`) is not exposed in the API or the admin UI.
+- Accessibility: screen-reader pass not done; checkout uses the browser's native validation messages (announced, not styled per field); admin pages were checked on mobile screenshots but are not in the 320 px automated reflow test.
+- Browser tests: intermittent Firefox (and once WebKit) stalls under full-suite load, described above; one retry stays configured for Firefox only.
+
 #### Remaining Phase 5 work (awaiting approval)
 
 - [x] Review and push the 5E commits (done in 5F, without force).
-- [ ] Review the local 5F commits; push only after approval.
-- [ ] Manual pass: screen readers (NVDA + Firefox, VoiceOver + iOS Safari), 200 % zoom, high contrast; Firefox flow check (see 5F).
-- [ ] Next stage: admin migration (products CRUD, order list/status), then retire the Vite-only redirects.
+- [x] Review and push the 5F commits (done in 5G, without force).
+- [ ] Review the local 5G commits; push only after approval.
+- [ ] Manual pass: `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md` (screen readers, zoom, contrast themes).
+- [x] Admin migration (5G). Retire the Vite-only redirects when the Vite app is switched off (Phase 7).
 - [ ] Before any deployment: the Render settings `TRUST_PROXY_HOPS` and `PROXY_CLIENT_IP_SECRET`, and on Vercel `BACKEND_ORIGIN`, `TRUSTED_CLIENT_IP_HEADER`, `PROXY_CLIENT_IP_SECRET` and `NEXT_PUBLIC_SITE_URL` (documented, not applied); then a preview deployment as a **new** Vercel project.
 
 **Acceptance (5C/5D/5E):** met locally except for the explicitly manual visual/browser pass.
@@ -1176,10 +1225,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/phase5/nextjs-foundation` is at `902dea7` (5E reviewed and pushed without force). Phase 5F is **local only**. Nothing is merged or deployed.
+`origin/phase5/nextjs-foundation` is at `11ba8ce` (5F pushed without force). Phase 5G is **local only**. Nothing is merged or deployed.
 
-1. Owner: review the local 5F commits; push only after explicit approval.
-2. Manual pass (R41): automated browser checks now pass in Chromium, Firefox and WebKit at six viewports (5F); screen-reader, zoom and high-contrast checks remain manual.
-3. Next stage, with approval: admin migration; then Phase 6 per `docs/PHASE6_REDESIGN_SPEC.md`.
+1. Owner: review the local 5G commits; push only after explicit approval.
+2. Manual pass (R41): `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`; automated browser, zoom and forced-colours checks pass (5G).
+3. Next stage, with approval: decide the pending Phase 6 items (P1–P8) and start Phase 6 per `docs/PHASE6_REDESIGN_SPEC.md`.
 4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
 5. Still open: the R31 production-readiness items and the production prerequisites in §6 Phase 4.

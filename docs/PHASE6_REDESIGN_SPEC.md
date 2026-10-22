@@ -1,11 +1,28 @@
 # Phase 6 — Storefront redesign specification (proposal, not implemented)
 
-Status: **proposal for review** (2026-10-22). Nothing in this document is built yet. It applies to the
+Status: **proposal for review** (updated 2026-10-22, Phase 5G). Nothing in this document is built yet. It applies to the
 Next.js storefront in `apps/web` only; the legacy Vite app is not redesigned. Behaviour, URLs, API
 contracts, security properties and test coverage from Phases 5A–5F stay as they are: the redesign
 changes presentation and component structure, not business rules.
 
-## 1. Where the UI is today (inspected, Phase 5F)
+## 0. Decisions already approved (MIGRATION_PLAN.md §6 Phase 6)
+
+These come from the approved migration plan and are not open questions:
+
+| # | Approved decision | Notes for implementation |
+| --- | --- | --- |
+| A1 | **shadcn/ui on Tailwind CSS**, initialised in `apps/web` (`npx shadcn init`) | Components are copied into the repo (no runtime UI library dependency) |
+| A2 | **Map the current brand colours (`#198754` etc.) to CSS variables** | §2.1 lists the tokens; whether `--primary` keeps `#198754` or moves to `#16794a` is still open (P1) |
+| A3 | **Replace ad hoc classes with `Button`, `Select`, `Input`, `Label`, `Card`, `Dialog`, `Tabs`, `Sheet`, `Sonner`** | `Dialog` replaces the admin delete confirmation (Phase 5G uses an inline `alertdialog` without new dependencies); `Tabs` for admin; `Sheet` for the mobile menu (and cart drawer); `Sonner` for "added to cart" |
+| A4 | **One page per commit, visual check at 375 px and 1280 px after each** | The Playwright projects and screenshots (MIGRATION_PLAN.md 5F/5G) are the evidence; add a 375 px project |
+| A5 | **Acceptance: no visual regressions; form accessibility equal or better** | Today's baseline: axe 0 serious/critical, field errors linked (5G), keyboard and forced-colours tests passing |
+| A6 | Phase 6 starts only **after functional parity** | Parity reached in 5G except the items listed in MIGRATION_PLAN.md 5G "Remaining gaps" |
+
+Pending owner decisions (proposals in this document, **not approved**): P1 primary colour `#16794a` vs keeping
+`#198754`; P2 retire the yellow Add to Cart button; P3 Inter font; P4 sort control; P5 footer; P6 dark mode;
+P7 show/hide password; P8 content width `max-w-7xl`.
+
+## 1. Where the UI is today (inspected, Phase 5F; updated 5G)
 
 | Aspect | Current state | Consequence |
 | --- | --- | --- |
@@ -15,10 +32,10 @@ changes presentation and component structure, not business rules.
 | Radius / elevation | `rounded` (38), `rounded-md` (18), `rounded-lg` (15), `rounded-full` (7); `shadow-sm`/`shadow-2xl` ad hoc | Inconsistent card and control shapes |
 | Layout | Root `<main>` is `max-w-5xl` (1024 px) while the header spans 1800 px | Desktop catalogue shows 5 columns in a narrow band (Vite filled the width with up to 8); header and content edges do not align |
 | Buttons | 6+ inline variants (green solid, green outline, yellow pill, red solid, slate-900 solid, underlined text) | Primary action looks different on product, cart, sign-in and account pages |
-| Forms | Labels wrap inputs; native validation on checkout; client validation on registration shown in one top alert | Errors are not linked to fields (`aria-describedby`), no per-field error styling |
+| Forms | Sign-in, registration and admin forms link each error to its field (`aria-describedby`, `aria-invalid`, focus to the first error) since 5G; checkout uses native validation | Error styling differs per form; checkout has no custom per-field messages |
 | Overlays | Hand-written cart drawer (focus trap added in 5F) and mobile menu popover | Works, but a second modal would duplicate the focus logic |
 | Feedback | 2-second inline "Added N to your cart" text | Easy to miss, no global toast region |
-| Copy | Developer wording on customer pages: "Authoritative total", "Stored total", "Historical unit price unavailable" | Reads as internal terminology |
+| Copy | Internal wording removed from customer pages in 5G ("Order summary", "Order total", "Price paid") | Keep plain language in new components |
 
 Strengths to keep: semantic landmarks, labelled controls, real 404/307 status codes, server-rendered
 catalogue, `next/image` with fixed boxes (measured CLS ≤ 0.0007), axe-clean pages (0 violations on 12
@@ -140,7 +157,9 @@ Contrast values are WCAG ratios computed from these hex values (2026-10-22) and 
     `AlertDialog` (destructive).
 11. **Error, 404, loading** — `EmptyState` variants; skeletons that match final layouts.
 
-Admin pages are out of scope until the admin migration is approved (they stay in the Vite app).
+12. **Admin** (migrated in 5G) — `Tabs` or side navigation for Dashboard/Products/Orders; `Card` statistics;
+    data table for products (sortable, keeps the mobile list); `Dialog` for delete (A3); status change as a
+    `Sheet` or inline form with `Select` + `Textarea`; status history as a timeline. Same role checks and tests.
 
 ## 5. Accessibility requirements (acceptance criteria for every task)
 
@@ -168,7 +187,6 @@ Admin pages are out of scope until the admin migration is approved (they stay in
 
 ## 7. Out of scope / decisions needed before Phase 6 starts
 
-- Approve: colour change from `#198754` to `#16794a` for primary; removal of the yellow CTA; Inter.
-- Approve or drop: sort control, footer, dark mode, show/hide password.
-- Admin redesign (after admin migration).
+- Decide the pending items P1–P8 (section 0).
+- Admin redesign is task 12 (the admin area was migrated in Phase 5G).
 - Images to object storage/CDN (see MIGRATION_PLAN.md 5D) — independent of the redesign.
