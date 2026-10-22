@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–2, R18, R20, 3A and 3B committed and pushed. Phase 3C (PostgreSQL API repositories, opt-in per domain) complete locally and awaiting review. MongoDB is still the default and only active database for every domain; no domain has been switched. No production setting, deployment or production data was touched.**
+Status: **Phases 0–3C committed and pushed. Phase 4 completed LOCALLY (all five domains switched to PostgreSQL on the local development environment, verified, rolled back and re-switched); frontend auth/cart compatibility committed locally. MongoDB is still the default; no production setting, deployment or production data was touched. Production cutover not started.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -238,9 +238,13 @@ Field-level conversions:
 | R23 | Extraction reads collection by collection, not as one snapshot; writes to a live production MongoDB during an import could produce an inconsistent copy | Medium | Production import only inside an agreed write freeze. Verification compares field by field and flags a changed source fingerprint (Phase 3B decision 4) |
 | R24 | Mixed data sources must stay consistent (for example, PostgreSQL carts with MongoDB users would break foreign keys) | ~~Medium~~ **Mitigated** | `config/dataSources.ts` refuses inconsistent combinations at start-up: carts and orders together; PostgreSQL carts/orders need PostgreSQL users, products and delivery options. 17 unit tests |
 | R25 | Selecting PostgreSQL in production by accident | ~~High~~ **Mitigated** | With `NODE_ENV=production`, any PostgreSQL selection also needs `POSTGRES_PRODUCTION_ENABLED=true` (and `DATABASE_URL`); the server also refuses to start if schema migrations are pending |
-| R26 | Switching carts to PostgreSQL makes cart routes require login (D1). The current frontend calls the cart only when logged in on most pages, but `CheckoutPage` and add-to-cart buttons must be gated before that switch | Medium | Documented as a Phase 4.4 prerequisite; not switched. MongoDB keeps the shared cart until then |
+| R26 | Switching carts to PostgreSQL makes cart routes require login (D1); the frontend had to handle 401 | ~~Medium~~ **Resolved (Phase 4 frontend)** | Session watcher: a 401 from cart/checkout/order data opens the login flow with a validated return path; add-to-cart while signed out opens it too; cache keys include the user id. The legacy MongoDB cart never returns 401, so it is unaffected. 44 frontend tests in both cart modes |
 | R27 | JSON key order of products whose MongoDB document lacked `stock` differs between stores (MongoDB puts `stock` first) | Low | Key order has no meaning in JSON; content verified equal on real data (23/23). The MongoDB path itself is byte-identical to before (48/48) |
 | R28 | The transaction-local flag that authorises `change_order_status()` can be set by any session with the application's database role | Low | It guards against accidental direct updates, not a compromised application. Every change is still audited in `order_status_events` (append-only) |
+| R29 | Frontend `npm audit`: 16 pre-existing advisories (1 critical via `axios` → `form-data`; high in `axios`, `react-router`/`turbo-stream`, and lint/build tooling) | **High** | Phase 4 reduced 22 → 16 (Vite 6.4.4) and added none. Fix needs a separate, approved dependency update (`axios`, `react-router` semver-compatible) with the frontend tests as the gate. Return paths are already validated by `safeReturnPath`, which addresses the open-redirect class |
+| R30 | The bearer token is kept in `localStorage` (unchanged since before the migration), so an XSS bug could read it | Medium | Not weakened or moved; never stored in Redux. A move to an httpOnly, `SameSite` cookie needs backend changes (cookie auth, CSRF protection, cross-site Vercel ↔ Render settings) and is a separate decision |
+| R31 | **Rollback limit.** Records written after a domain switches to PostgreSQL (new users, orders, carts, status changes) do not exist in MongoDB; rolling that domain back hides them (verified: a PostgreSQL-only user gets 401 after rollback) | **High (production)** | Locally verified and documented. For production: switch at low traffic, keep the rollback window short, and decide in advance whether post-switch writes are re-imported into MongoDB (no reverse sync exists) or accepted as lost on rollback |
+| R32 | After a switch, `data:verify` reports MISMATCH by design (PostgreSQL gains new rows) | Low | Verified locally: all 47 copied records still match field for field; only additions appear as "unexpected". Use verify **before** each switch; afterwards, PostgreSQL is authoritative |
 
 ### Approved decisions (2026-10-21)
 
@@ -528,17 +532,88 @@ Rollback for any step: no API reads PostgreSQL until Phase 4 switches a domain, 
 
 ### Phase 4 — Cut over domain by domain (lowest risk first)
 
-For each domain: convert its controller to TS → switch its flag to `postgres` locally → characterisation suite → re-run ETL → deploy with flag on → smoke test → monitor. Writes for a domain move all at once; **no dual-write**.
+**Local cutover: COMPLETE (2026-10-22), on the local development environment only.** Production cutover has **not** started; it needs the outstanding production decisions (§6 Phase 3 list, R29–R31) and explicit approval.
 
-- [ ] 4.1 **Delivery options** (read-only, 3 rows)
-- [ ] 4.2 **Products** (public read + admin CRUD). Re-run ETL immediately before flipping so admin edits aren't lost
-- [ ] 4.3 **Users/auth** (register, login, profile, `protect`). Apply decision D2. Bcrypt hashes copy verbatim — verify an existing user can log in with their old password
-- [ ] 4.4 **Cart + payment summary.** Apply decision D1 (per-user cart = a contract change: add `protect` to cart routes; gate `useCartQuery` in `CheckoutPage`, `Product`, `OneProductPage`, `OrdersPage` "buy again"). Separate commit for the behaviour change with its own tests
-- [ ] 4.5 **Orders** (transactional `createOrder`, legacy-order LEFT JOIN). Final ETL run of orders inside a short write freeze
-- [ ] 4.6 Remove Mongoose: models, `config/db.js`, `MONGODB_URI`, Mongo repo implementations, flags — **only after 2 weeks of stable production** and a final `mongodump`
+Writes for a domain move all at once; **no dual-write**. MongoDB stays untouched and remains the rollback target.
 
-**Acceptance per domain:** characterisation suite green; verify script green after the final ETL; manual smoke of that domain's features in production; no 5xx increase in logs for 48 h.
-**Rollback per domain:** set `DATA_SOURCE_<DOMAIN>=mongo` and restart (Mongo is untouched and still authoritative for anything written before the flip). Writes made to Postgres after the flip must be replayed or accepted as lost — this is why each flip happens right after an ETL run, at low traffic.
+#### Prerequisites verified (Part C, 2026-10-22)
+
+- Fresh backups of both local databases, **restore-verified**:
+  - `mongo-ecommerce_store-before-phase4-20261022-020258.archive.gz`: restored 51/51 documents, per-collection `dbHash` identical to live.
+  - `pg-ecommerce-before-phase4-20261022-020258.dump`: restored into a scratch database with identical counts and migrations.
+- `db:status`: 0001, 0002 and 0003 applied.
+- `data:verify`: **MATCH 47/47**. Source fingerprint unchanged since the 3B import (`207443604b2e…`), so no refresh was needed.
+- Data-source rules: 17 unit tests; the server refuses invalid values, mixed carts/orders, PostgreSQL orders without PostgreSQL users/products/delivery options, and production use without `POSTGRES_PRODUCTION_ENABLED=true`.
+
+#### Local switch results
+
+Each step compared the compiled server (candidate, :3000) against an all-MongoDB baseline (:3101) on real local data, and checked the frontend path through the Vite dev server's `/api` proxy.
+
+| Step | Domains on PostgreSQL | Responses equal to MongoDB | Integration tests | Counts | Frontend path |
+| --- | --- | --- | --- | --- | --- |
+| [x] 4.1 | delivery options | **29/29** (29/29 identical key order) | 4 + 2 passed | 3 = 3 | shell 200, proxied API equal |
+| [x] 4.2 | + products | **29/29** (24/29 key order; R27) | 4 + 22 passed | 35 = 35 | ok |
+| [x] 4.3 | + users | **29/29** (24/29 key order; R27); auth error responses identical | 5 passed | 1 = 1 (+ local test users) | ok |
+| [x] 4.4 + 4.5 | + carts + orders (all five) | **26/26** incl. all 8 legacy orders (only `status` excluded); MongoDB no longer connected | full suites | 8 legacy orders, 19 lines | ok |
+
+Carts and orders on PostgreSQL: **30/30 behaviour checks** on the running local server:
+- every cart/order endpoint needs a login;
+- Bob can't see, change or delete Alice's lines (404);
+- add/merge/update reject 0, 11, 1.5, "2", -1 and 2+9 (FD1);
+- a deleted product stays as unavailable and blocks checkout (409) until removed;
+- **0 products have inventory tracking**, and stock is unchanged after checkout;
+- **3 simultaneous checkouts produce exactly 1 order**, and only the buyer's cart is cleared;
+- snapshots as sold;
+- status changes are admin-only (403/401), need a reason (400), refuse disallowed transitions (409), and are audited with actor, previous status, new status, time and reason;
+- **cancellation keeps the total and lines, with no restock and no refund**;
+- legacy history intact (8 orders, 19 lines, no invented status).
+
+End-to-end smoke through the Vite proxy (all PostgreSQL): **20/20**. It covered register, login (case-insensitive email), browse, add, update quantity and delivery, payment summary, checkout (total equals summary), cart emptied, order history and tracking, then switching to another user (empty cart, no foreign orders, 404 on the other user's order) and 401 when signed out.
+
+Rollback (E7): **11/11**.
+- Restarting without `DATA_SOURCE_*` serves MongoDB again: 35 products, the legacy shared cart, 8 orders, and 501 for status changes.
+- PostgreSQL kept every row.
+- Switching forward again restored the Phase 4 orders and statuses.
+- **MongoDB `dbHash` identical before and after Phase 4.** As expected (R31), users created on PostgreSQL can't log in after rolling back.
+
+Data comparison after the local switch: all 47 copied records still match field for field; PostgreSQL additionally holds the local test data (4 users, 3 orders, carts and status events), reported as "unexpected" by design (R32).
+
+#### Local activation and rollback commands (Windows PowerShell, from `ecommerce-backend`)
+
+```powershell
+# 0. Safety first: back up both databases (db/README.md "Backups"), then confirm:
+npm.cmd run -s db:status          # 0001-0003 applied
+npm.cmd run -s data:verify        # MATCH; "source changed since import" must be False
+# If the source changed: back up, then  npm.cmd run data:import  and verify again.
+
+# 1-4. Switch for this PowerShell session only (no file changes), one step at a time:
+$env:DATA_SOURCE_DELIVERY_OPTIONS = "postgres"            # 4.1
+$env:DATA_SOURCE_PRODUCTS = "postgres"                    # 4.2
+$env:DATA_SOURCE_USERS = "postgres"                       # 4.3
+$env:DATA_SOURCE_CARTS = "postgres"; $env:DATA_SOURCE_ORDERS = "postgres"   # 4.4 + 4.5 (together)
+npm.cmd run dev                   # or: npm.cmd run build; npm.cmd start
+# The log line "Data sources: ..." shows the selection.
+
+# Rollback (any step): stop the server, clear the variables, start again.
+Remove-Item Env:DATA_SOURCE_DELIVERY_OPTIONS, Env:DATA_SOURCE_PRODUCTS, Env:DATA_SOURCE_USERS, Env:DATA_SOURCE_CARTS, Env:DATA_SOURCE_ORDERS -ErrorAction SilentlyContinue
+npm.cmd run dev                   # all domains on MongoDB again; PostgreSQL data is kept
+
+# To discard the local Phase 4 test data from PostgreSQL, restore the pre-Phase-4 dump
+# (db/README.md "Rollback"): ..\..\ecommerce-backups\pg-ecommerce-before-phase4-20261022-020258.dump
+```
+
+The frontend needs no setting. With the legacy MongoDB cart it behaves as before. With PostgreSQL carts, a 401 opens the login flow and returns the user afterwards.
+
+#### Remaining before any production cutover
+
+- [ ] Decisions: production MongoDB provider; Render Postgres instance (region, version 17, backups); write-freeze window; whether post-switch writes must survive a rollback (R31)
+- [ ] R29: approved frontend dependency update (`axios`, `react-router`)
+- [ ] Render settings from "Render deployment preparation" (§6 Phase 3) applied, then deploy `migration/postgres` with **all domains on MongoDB** first; verify; then switch production domains one at a time with `POSTGRES_PRODUCTION_ENABLED=true`, each right after a production `data:import` + `data:verify`
+- [ ] 4.6 Remove Mongoose only after two weeks of stable production on PostgreSQL and a final `mongodump`
+
+**Acceptance per domain (production):** suites green; `data:verify` MATCH immediately before the switch; smoke test of that domain's features; no 5xx increase for 48 h.
+**Rollback per domain:** unset `DATA_SOURCE_<DOMAIN>` and restart. MongoDB is untouched and authoritative for everything written before the switch; writes after it are not in MongoDB (R31).
+
 
 ### Phase 5 — Next.js frontend in `apps/web` (Vite stays live)
 
@@ -661,11 +736,9 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Pushed to `origin/migration/postgres`: Phases 1, 2, R18, R20, 3A, 3B (latest `6a4a560`). Phase 3C is complete locally and awaiting review. **No domain has been switched to PostgreSQL.**
+Pushed to `origin/migration/postgres`: everything up to Phase 3C (`9d83480`). Committed locally, **not yet pushed**: `d6d1b87` (frontend Vite 6.4.4 + test tooling), `cb43f1b` (frontend login flow and per-user cart compatibility), and the Phase 4 plan update. **Phase 4 is complete locally; production cutover has not started.**
 
-1. Owner: review Phase 3C (`repositories/`, `config/dataSources.ts`, migration 0003, the O4 endpoint, the intentional differences) and approve committing/pushing it.
-2. Owner: confirm the "Phase 3C decisions taken" above.
-3. Owner: still open from Phase 3B: the production MongoDB provider and the Render Postgres instance.
-4. Then Phase 4, switching domains one at a time, each behind its `DATA_SOURCE_*` variable with a re-run of `data:import` + `data:verify` just before the switch:
-   - delivery options → products → users;
-   - then carts + orders together, after the frontend gates the cart behind login (R26).
+1. Owner: review and approve pushing the local commits.
+2. Owner: decide R29 (frontend dependency update) and R31 (rollback policy for post-switch writes).
+3. Owner: production prerequisites. Production MongoDB provider, Render Postgres instance, write-freeze window. Then apply the documented Render settings and deploy with all domains on MongoDB.
+4. Production switching, one domain at a time, only with explicit approval.
