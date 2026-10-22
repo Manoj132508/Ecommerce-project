@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–4 (local) committed and pushed. Phase 5A (Next.js foundation in `apps/web`) and the 5B cookie-session foundation are done locally on branch `phase5/nextjs-foundation` (not pushed): same-origin `/api` proxy, PostgreSQL sessions (migration 0004), HttpOnly cookies with CSRF and Origin checks, disabled by default and refused in production. The Vite app and the legacy JWT login are unchanged. MongoDB is still the production default; nothing was deployed and no production setting or data was touched. Page migration awaits approval.**
+Status: **Phases 0–4 (local) pushed on `migration/postgres`. Branch `phase5/nextjs-foundation` pushed up to `b3e3d08` (5A Next.js foundation, 5B cookie sessions). Committed locally after that, not pushed: 5C security hardening (CORS 403, shared authentication rate limits, Next.js lint rules) and 5D the first migrated pages (home, products, product details, sign-in, registration, account) with product images. Cookie sessions stay disabled by default and refused in production. The Vite app is unchanged and remains the live storefront; MongoDB is still the production default. Nothing was deployed and no production setting or data was touched.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -247,10 +247,14 @@ Field-level conversions:
 | R32 | After a switch, `data:verify` reports MISMATCH by design (PostgreSQL gains new rows) | Low | Verified locally: all 47 copied records still match field for field; only additions appear as "unexpected". Use verify **before** each switch; afterwards, PostgreSQL is authoritative |
 | R33 | A Phase 4 smoke-test log printed the first 44 characters of a JWT issued by the **local** development server to the synthetic local test account `phase4-alice@example.com` | Low | **Investigated (2026-10-22): not a credential exposure.** The 44 characters were the fixed HS256 header (`{"alg":"HS256","typ":"JWT"}`, identical for every token) plus `.eyJpZCI` (`{"id"`). No user id, expiry or signature was printed, and the token cannot be rebuilt without `JWT_SECRET`. Neither `JWT_SECRET` nor the PostgreSQL password appears in any log, report, scratch file or git history (scanned). The account exists only in local PostgreSQL. No rotation needed. Prevention: the repository's tests and scripts print no tokens (checked); ad-hoc scripts must drop `token` before printing a response |
 | R34 | A reconciliation process that dies mid-run leaves its run lock in `reconciliation_runs` | Low | Intended: an overlapping run could race on product updates. The readiness gate reports "a reconciliation run is in progress". Remove the lock by hand once no run is active, then re-run (runs are idempotent) |
-| R35 | `eslint-config-next` (via `@next/eslint-plugin-next` → `fast-glob` → `micromatch`) pulls in `braces` ≤3.0.3: unpatched stack-exhaustion DoS (GHSA-vfj7-8cjw-p6xm). No fixed release exists; npm's only fix is a downgrade to Next 14 lint rules | Low (dev tooling only) | Not installed. `apps/web` lints with the Vite app's stack (`@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`), so `npm audit` is 0, but Next.js-specific lint rules are missing. Re-add once `braces` is patched |
-| R36 | A request from an Origin outside the CORS allow-list gets **500** (the `cors()` origin callback raises an error, handled by Express's default error handler) instead of 403. Pre-existing; affects legacy and cookie requests alike | Low–Medium | The request is still refused before any route runs (tested), but a 500 is misleading, and outside `NODE_ENV=production` the default handler includes a stack trace. Fix separately (map CORS rejections to 403 JSON), because it changes a legacy response. Required before cookie-session activation |
-| R37 | No rate limiting on login (legacy `/api/auth/login` or `/api/auth/session`): password guessing is limited only by bcrypt cost | Medium | Pre-existing. Add per-IP and per-account throttling (edge or middleware) before production activation of cookie sessions |
+| R35 | `eslint-config-next` pulls `fast-glob` → `micromatch` → `braces` ≤3.0.3: unpatched stack-exhaustion DoS (GHSA-vfj7-8cjw-p6xm) | ~~Low~~ **Resolved (5C)** | `eslint-config-next` installed with its `fast-glob` replaced by a local `fs.globSync` shim through npm `overrides` (the plugin only globs the optional `settings.next.rootDir`); `micromatch`/`braces` not installed; 22 Next.js rules active; `npm audit` 0 |
+| R36 | A request from an Origin outside the CORS allow-list got **500** (Express default error page, stack trace outside production) | ~~Low–Medium~~ **Resolved (5C)** | JSON `403 {"message":"Origin not allowed"}` before CORS, body parsing or any route; nothing written or counted (tested) |
+| R37 | No rate limiting on login | ~~Medium~~ **Resolved (5C)** | Shared, durable counters (PostgreSQL 0005 or MongoDB `authRateLimits`), per address and per account, same 429 for known and unknown accounts, fail closed, trusted-proxy handling. See §6 Phase 5 "5C" |
 | R38 | Locally, cookies are not port-scoped (RFC 6265): the dev session cookie on `localhost:3001` is also sent to Express on `localhost:3000` | Low (local only) | Writes still need Origin and the CSRF token (tested). In production the API runs on a different host, so the `__Host-` cookie never reaches it directly (tested in the HTTPS-equivalent run) |
+| R39 | Registration reveals whether an email is registered (409 "User already exists", legacy contract kept by `/api/auth/accounts` too) | Low | Mitigated by the per-address registration limit. Full protection needs email verification ("if the address is new, we sent a link"), a product decision for later |
+| R40 | The per-account failure limit lets someone lock a known email out of sign-in for one window (default 15 min) | Low | Deliberate trade-off against password guessing; the window and limit are configurable. Revisit with email-based unlock or CAPTCHA if abused |
+| R41 | No real-browser verification in this environment (no browser automation available) | Medium (until done) | Component tests cover roles, labels, focus order and keyboard activation; e2e covers HTTP behaviour. A manual desktop/mobile/keyboard pass is required before any preview is shown to users |
+| R42 | Catalogue pages are cached for 60 s; product images live in the repository (12 MB) | Low | Admin edits appear within 60 s (an on-demand `revalidateTag("catalog")` hook can come with the admin migration). Move images to object storage/CDN under the conditions in §6 Phase 5 "5D" |
 
 ### Approved decisions (2026-10-21)
 
@@ -729,7 +733,7 @@ In those cases recovery is forward-fix on PostgreSQL:
 | `@reduxjs/toolkit`, `react-redux` | 2.13.0, 9.3.0 | UI state only |
 | `tailwindcss`, `@tailwindcss/postcss` | 4.3.3 | |
 | `typescript` | 6.0.3 | strict, `noUncheckedIndexedAccess` (same major as the backend) |
-| `eslint` + `typescript-eslint` + `eslint-plugin-react-hooks` | 9.39.5, 8.71.1, 5.1.0 | same stack as the Vite app; `eslint-config-next` deliberately not used (R35) |
+| `eslint` + `eslint-config-next` | 9.39.5, 16.4.0 | official Next.js rules (core web vitals + TypeScript); its `fast-glob` is replaced by `tools/fast-glob-shim` (R35, resolved in 5C) |
 | `vitest`, `tough-cookie`, `server-only` | 5.0.5, 6.0.2, 0.0.1 | tests; browser-like cookie jar for the end-to-end check; build-time guard for server-only modules |
 
 ```
@@ -762,7 +766,7 @@ State rule (unchanged from the Vite app): products, cart, orders and the signed-
 9. **Tests.** `MemoryRouter`-based page tests and `msw` handlers need `next/navigation` test doubles when pages move.
 10. **Registration** still returns a JWT (legacy). Cookie-session registration needs a decision: a new `POST /api/auth/session/register`, or register followed by sign-in.
 
-#### Route-by-route mapping (pages not migrated yet)
+#### Route-by-route mapping (plan; current status in "5D" below)
 
 | Vite route | Vite component | Next.js route | Rendering plan | Access | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -839,7 +843,7 @@ The browser calls `/api/*` on the Next.js host. The route handler `src/app/api/[
 #### Local development commands (Windows PowerShell)
 
 ```powershell
-# Express with cookie sessions (LOCAL ONLY). Migration 0004 is new: back up the
+# Express with cookie sessions (LOCAL ONLY). Migrations 0004 and 0005 are new: back up the
 # local PostgreSQL first (db/README.md "Backups"), then apply it.
 cd ecommerce-backend
 npm.cmd run db:migrate
@@ -856,12 +860,13 @@ npm.cmd run dev                 # open http://localhost:3001 (the origin must ma
 # Checks
 npm.cmd test; npm.cmd run typecheck; npm.cmd run lint; npm.cmd run build
 npm.cmd run test:e2e            # after building ecommerce-backend and apps/web; needs Docker
+npm.cmd run test:pages          # migrated pages end to end (production and dev servers); same prerequisites
 
 # The Vite app is unchanged: cd ecommerce-project; npm.cmd run dev  (http://localhost:5173, bearer tokens)
 # Turn cookie sessions off again: Remove-Item Env:AUTH_COOKIE_SESSIONS
 ```
 
-The local development database does **not** have 0004 applied yet. With any PostgreSQL domain selected, the API refuses to start until `db:migrate` runs, as it does for every migration.
+The local development database does **not** have 0004 or 0005 applied yet. With any PostgreSQL domain selected, the API refuses to start until `db:migrate` runs, as it does for every migration.
 
 #### Conditions before the legacy bearer tokens can be removed
 
@@ -870,16 +875,100 @@ The local development database does **not** have 0004 applied yet. With any Post
 3. A migration window of at least the JWT lifetime (30 days) after step 1, with the exchange endpoint available, so signed-in users move without a forced sign-in. The window is set when step 1 happens; no deadline is enforced now.
 4. Then: remove the bearer path from `protect`, the exchange endpoint and `token` from the legacy responses, and **rotate `JWT_SECRET`** to invalidate any token still outstanding.
 
+#### 5C — Authentication security hardening (2026-10-22, commit `1be8a1c`, local)
+
+- **R36 fixed: rejected origins get a JSON 403.** A request whose `Origin` is not on the CORS allow-list now gets `403 {"message":"Origin not allowed"}`. Previously it was Express's HTML 500, with a stack trace outside production. The check runs before CORS headers, body parsing and every route, so nothing is written or counted (tested). Requests without an `Origin` continue as before (server-to-server calls, same-origin GETs).
+- **R37 fixed: rate limits on authentication, in a shared database.**
+  - *Storage:* PostgreSQL migration `0005_auth_rate_limits`, or the MongoDB collection `authRateLimits` with a TTL index. The store follows `DATA_SOURCE_USERS`. Each hit is one atomic statement on the database clock, so every Render instance enforces the same counters (25 simultaneous attempts are counted as 25, tested). Keys are `SHA-256(rule, subject)`: no email or IP address is stored.
+  - *Limits:* per address: login (legacy and cookie share one budget, default 20 per 15 min), registration (legacy and `/api/auth/accounts`, 10), token exchange (20). Per account: failed logins (10). The account check runs **before** the password check, so a correct password is also refused while locked. Unknown emails are counted exactly like real ones. Every limit answers the same `429 {"message":"Too many attempts. Please wait a few minutes and try again."}` with `Retry-After`.
+  - *Account existence:* unknown emails now do the same bcrypt work as wrong passwords, so timing does not reveal whether an account exists.
+  - *Failure handling:* if the counter store fails, sign-in is refused with 503 (fail closed).
+  - *Settings:* `AUTH_RATE_LIMIT` (`false` only outside production), `AUTH_RATE_LIMIT_WINDOW_MINUTES`, `…_LOGIN_PER_IP`, `…_LOGIN_FAILURES_PER_ACCOUNT`, `…_REGISTER_PER_IP`, `…_EXCHANGE_PER_IP`. In-process test apps run without limits unless a test provides them; `server.ts` always builds the limiter.
+- **Client addresses without spoofing.**
+  - `TRUST_PROXY_HOPS` (default 0) sets Express `trust proxy`. At 0, `X-Forwarded-For` is ignored. At `n`, only the address `n` hops from the right counts, so a forged leftmost entry has no effect. Render: set 1, after confirming Render appends exactly one hop.
+  - The Next.js proxy may forward the browser address as `X-Client-IP` with `X-Proxy-Secret`, but only when both sides set `PROXY_CLIENT_IP_SECRET` (32+ characters) and Next.js sets `TRUSTED_CLIENT_IP_HEADER` to a header the platform overwrites (Vercel: `x-real-ip`). Client-supplied `X-Client-IP` or `X-Proxy-Secret` headers are never forwarded, and Express ignores them without the secret (tested).
+  - IPv6 clients are counted per /64.
+- **Operational data excluded from migration.** The 3B extraction skips the `authRateLimits` collection (`OPERATIONAL_COLLECTIONS`), so login attempts during a write freeze do not change the source fingerprint (tested). Deploying this backend creates that collection in production MongoDB on the first login attempt; no existing data is touched.
+- **R35 resolved: official Next.js lint rules without the vulnerable chain.** `eslint-config-next` 16.4.0 is installed with 22 `@next/next/*` rules active. Its only `fast-glob` use, expanding the optional `settings.next.rootDir` monorepo glob, is served by `apps/web/tools/fast-glob-shim`, a 30-line wrapper around Node's `fs.globSync` wired in through `package.json` `overrides` (`$fast-glob`). `micromatch` and `braces` are not installed; `npm audit` is 0.
+- **Tests:**
+  - MongoDB suite: +21, covering configuration, brute force, lockout and recovery, unknown-account parity, timing parity, per-address limits, registration limits, hashed keys and TTL, atomic counting, fail-closed, proxy hops, the proxy secret, IPv6 subjects and legacy compatibility.
+  - PostgreSQL suite: +13, covering the store, cookie-login limits, shared budgets, rejected origins, token exchange and account creation.
+  - Mutation checks, each removal caught: the 403 middleware, the account lock, failure counting, the trusted-hop count, the secret check, fail-closed, the timing equaliser and IPv6 grouping.
+
+#### 5D — First pages migrated (local, awaiting approval to push)
+
+| Route | Status | Rendering | Notes |
+| --- | --- | --- | --- |
+| `/` | **migrated** | Server Component, catalogue cached 60 s | All products; `?q=` search and `?category=` filter, as on `/products` |
+| `/products` | **new** | Server Component | Listing with search and category chips; search pages are `noindex` |
+| `/products/[productId]` | **migrated** | Server Component + `generateMetadata` | Title, description, canonical, Open Graph image, schema.org `Product` JSON-LD (escaped). Malformed or unknown ids answer a **real 404** |
+| `/login` | **migrated** (5B) | Client form | Notices from Redux; `?from=` validated by `safeReturnPath`; link to registration keeps the return path |
+| `/register` | **migrated** | Client form | `POST /api/auth/accounts`, then the normal sign-in (below) |
+| `/account` | **new** | Server layout guard + Server Component | Session checked server-side per request (redirect 307 to `/login?from=%2Faccount`); profile; sign out; sign out on all devices |
+| unknown URLs | **404** | `not-found.tsx` | Approved behaviour change |
+| `/checkout`, `/orders`, `/tracking`, `/order-confirmation`, `/product-unavailable`, `/admin` | next stage | — | Still served by the Vite app |
+
+- **Architecture:**
+  - Public catalogue pages are Server Components (SEO, no client fetch for first paint). Product data is read server-to-server from Express (`lib/server/catalog.ts`, React `cache` + `fetch` revalidate 60 s) and validated (`features/catalog/product.ts`).
+  - Interactive controls are Client Components: the quantity select and Add to Cart (`features/cart/AddToCartControls`), the session area in the header, and the forms. TanStack Query holds the session (user + CSRF token) and mutations. Redux holds sign-in notices only, which replaces `location.state`. Return paths always go through `?from=` and `safeReturnPath`.
+  - The header search is a GET `next/form` to `/products?q=`: it works without JavaScript and navigates client-side when it can.
+- **Status codes and loading states.** A `loading.tsx` above a page makes Next.js stream a 200 before `notFound()` or `redirect()` can run; the first pages e2e run caught exactly this. The listing skeletons therefore live in route groups (`app/(catalog)/loading.tsx`, `app/products/(list)/loading.tsx`) that wrap only the listings. The product page and account area have no loading boundary, so their 404 and 307 are real. Error boundaries: `app/error.tsx`, `app/products/error.tsx` (catalogue unavailable), `global-error.tsx`.
+- **Registration (Part E).** `POST /api/auth/accounts` (backend, cookie mode only) reuses `registerAccount()`, the same validation and creation code as the legacy endpoint (shared function). It returns `201 {user}` with **no token, no cookie and no session**, and requires an allowed Origin and JSON. After success the browser sets a Redux notice and goes to `/login?from=…`, where the normal cookie sign-in applies. Duplicate email (409), invalid data (400), rate limits (429) and server failures (500, or non-JSON) show safe messages. Tests confirm that no password, session token or JWT reaches `localStorage`, `sessionStorage`, `document.cookie`, Redux or the query cache. The CSRF token is held in memory in the session query by design: it is not a credential.
+- **Add to cart (limited integration).** On product cards and pages: sends `POST /api/cart-items` with the CSRF token. Signed out → notice + `/login?from=<this page>`. A 401 ends the local session and asks to sign in again. There is no cart page yet (next stage).
+
+**Product images (Part D)**
+- *Inventory:* the local catalogue references 35 product images. All exist and are 720×720 JPEGs.
+- *Copied:* those 35, plus all 11 rating images (192×38 PNG), into `apps/web/public/images/{products,ratings}`. Each was verified as a decodable image (sharp) and byte-identical to its source (SHA-256).
+- *Not copied:* 7 files that no product or order snapshot references (`2-slot-toaster-white`, `adults-plain-cotton-tshirt-2-pack-teal`, `athletic-cotton-socks-6-pairs`, `elegant-white-dinner-plate-set`, `intermediate-composite-basketball`, `men-chino-pants-beige`, `men-cozy-fleece-hoodie-light-teal`). They stay in the Vite app; the first three only appear in backend test fixtures. Icons, logos and guide images are not used by the migrated pages and were not copied. Total: 12 MB.
+- *URLs:* stored paths (`images/products/x.jpg`) are mapped explicitly to `/images/products/x.jpg` (`productImageSource`). Anything else is not rendered, except https URLs (admin-entered), which are shown unoptimised.
+- *Rendering:* `next/image` with `fill` in fixed square boxes, `sizes` hints (cards ≤ 180 px, product page ≤ 500 px), alt text = product name, the first four cards and the product photo `preload`ed, the rest lazy. Rating images have their value as alt text.
+- *Optimiser:* limited to `/images/**` with no query strings and no remote hosts. Device sizes are capped at 1080 because the sources are 720 px.
+- *Verified* in production (`next start`) and development (`next dev`): files are served byte-identical, `/_next/image` returns WebP (7.5 kB vs the original), and the optimiser refuses query variants, remote URLs and paths outside `/images`.
+
+**When to move images to object storage or a CDN.** Move them once any of these holds:
+- admins upload images instead of typing paths;
+- the catalogue grows beyond a few hundred images, or git and deploy size becomes a burden (images are in the repository now);
+- images must change without a frontend deploy;
+- the Vite and Next.js apps (or other clients) must share one copy;
+- Vercel image-optimisation usage or cost becomes significant.
+
+Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow exactly that host in `images.remotePatterns`.
+
+**Behaviour differences from the Vite app (intentional unless noted)**
+1. **Search:**
+   - Search is submitted, through the URL (`?q=`): shareable, server-rendered, works without JavaScript. Vite filtered live as you typed, from Redux.
+   - Category filters are new.
+2. **Unknown URLs and missing products** answer 404. Vite showed the home page for unknown URLs and answered 200 "Product not found" for missing products.
+3. **Registration does not sign you in**; you sign in next. Vite stored a JWT and signed in immediately.
+4. **Authentication is the cookie session.** It needs `AUTH_COOKIE_SESSIONS=true` and users on PostgreSQL. The Vite app keeps its bearer token.
+5. **Header:** no cart, orders or admin links yet (next stage). The account page is new.
+6. **Add to Cart** needs a cookie session and therefore PostgreSQL carts, and only confirms ("Added N to your cart"); there is no cart page yet.
+7. **Catalogue freshness:** public pages may show data up to 60 s old after an admin edit. Vite fetched live.
+8. **Product page:** empty description sections are hidden; the image is optimised (WebP, responsive).
+
+**Tests and verification for 5D:**
+- *Next.js unit and component tests: 143 in total.* Catalogue rules: 26. Pages: 14, covering home, search, filters, the product page, JSON-LD escaping, metadata and 404s. Auth, account and cart controls: 24, covering sign-in, safe return paths, registration with every error class, header state, sign-out, session expiry, account guard, sign-out everywhere, add to cart, quantities, keyboard reachability and storage checks. The proxy, environment and client tests cover the rest.
+- *Pages end to end:* `npm run test:pages`, **35/35**. It runs real `next start` and `next dev`, the compiled Express API, and throwaway PostgreSQL with real images. It covers SSR content, preload and lazy loading, search and filters, `noindex`, canonical, Open Graph and JSON-LD, real 404s, static and optimised images in both modes, optimiser refusals, unused images absent, register → 307 guard → sign in → account → sign out → 307, no live session left, per-client rate limiting through the proxy (and no bypass with spoofed headers), and a rejected origin answered with 403.
+- *Proxy end to end:* `npm run test:e2e`, 52/52, now on the shared helpers in `scripts/e2e-support.mjs`.
+- **Browser automation is not available in this environment.** Visual, responsive and real-browser checks, including keyboard use in a browser, are **pending a manual pass**. The component tests cover labels, roles, focus order and Enter activation; the e2e runs cover HTTP behaviour.
+
 #### Remaining Phase 5 work (awaiting approval)
 
-- [ ] Migrate the pages per the mapping, with tests (jsdom and `next/navigation` doubles), one feature at a time.
-- [ ] Decisions: `*` → 404; image hosting (copy 15 MB vs shared storage); cookie-session registration.
-- [ ] Port the session-expiry UX (`AuthSessionWatcher`: 401 → sign-in with return path) and cross-tab sign-out (`BroadcastChannel`).
-- [ ] Re-add `eslint-config-next` once `braces` is patched (R35).
-- [ ] Preview deployment as a **new** Vercel project (needs approval; `BACKEND_ORIGIN` set server-side; Express `AUTH_ALLOWED_ORIGINS` unchanged in production until activation).
+- [ ] Approval to push `phase5/nextjs-foundation` (commits after `b3e3d08` are local).
+- [ ] Manual browser pass: desktop and mobile widths, keyboard-only navigation, screen-reader spot check.
+- [ ] Next stage: cart, checkout, order confirmation, orders and tracking pages (cookie session + CSRF); then admin; the session-expiry watcher for client-side 401s on those pages; cross-tab sign-out (`BroadcastChannel`).
+- [ ] Before any deployment: the Render settings `TRUST_PROXY_HOPS` and `PROXY_CLIENT_IP_SECRET`, and on Vercel `BACKEND_ORIGIN`, `TRUSTED_CLIENT_IP_HEADER`, `PROXY_CLIENT_IP_SECRET` and `NEXT_PUBLIC_SITE_URL` (documented, not applied); then a preview deployment as a **new** Vercel project.
 
-**Acceptance (foundation):** met. `next build`, typecheck and lint pass; 75 unit and 52 end-to-end checks pass; the backend suites are green; the Vite app checks are green.
-**Rollback:** delete `apps/web` and revert the backend commit. With `AUTH_COOKIE_SESSIONS` unset, the backend behaves exactly as before. Migration 0004 has a down file. Production is untouched.
+**Acceptance (5C/5D):** met locally.
+- Backend: MongoDB suite 211 + 9 todo, PostgreSQL suite 251.
+- Next.js: 143 unit and component tests, 35 pages e2e and 52 proxy e2e checks.
+- Vite: 47 tests, plus the read-only smoke run.
+- Typecheck, lint, builds, and `npm audit` 0 in every package.
+
+**Rollback:**
+- Revert the Phase 5 commits. The Vite app was not modified.
+- Migration 0005 has a down file.
+- Turning rate limits off (`AUTH_RATE_LIMIT=false`) is possible only outside production.
 
 ### Phase 6 — shadcn/ui (after parity, component by component)
 
@@ -973,10 +1062,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/migration/postgres` holds everything through Phase 4 and the R29/R31 work (`49806d5`). Phase 5A and the 5B foundation are committed on the local branch `phase5/nextjs-foundation` and are **not pushed or merged**. Nothing was deployed.
+`origin/phase5/nextjs-foundation` is at `b3e3d08`. The 5C security commit (`1be8a1c`) and the 5D pages commits are **local only**, awaiting approval to push. Nothing is merged or deployed.
 
-1. Owner: review `phase5/nextjs-foundation` and approve pushing it.
-2. Owner: decide the Phase 5 items: `*` → 404, image hosting, cookie-session registration.
-3. Before cookie sessions can ever be enabled in production: R36 (CORS 403), R37 (login rate limit), production users on PostgreSQL (cutover), and approval.
-4. With approval: migrate the pages one feature at a time per the route mapping, then a preview deployment as a new Vercel project.
-5. Still open from earlier phases: the R31 production-readiness items (write freeze, guarded reconciliation CLI, rehearsal) and the production prerequisites in §6 Phase 4.
+1. Owner: review the 5C and 5D commits and approve pushing them.
+2. Manual browser pass (R41): desktop and mobile widths, keyboard-only, screen-reader spot check on `npm run dev` (`apps/web`).
+3. Next stage, with approval: cart, checkout, orders and tracking pages on the cookie session, then admin.
+4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
+5. Still open: the R31 production-readiness items and the production prerequisites in §6 Phase 4.

@@ -1,6 +1,6 @@
 # PostgreSQL schema, migrations and data copy
 
-Status: **Phase 5B.** The schema (migrations 0001–0004), the MongoDB →
+Status: **Phase 5B.** The schema (migrations 0001–0005), the MongoDB →
 PostgreSQL copy-and-verify tooling and the PostgreSQL API repositories are
 built and tested. **MongoDB is still the default and active database for every
 domain**: an API domain uses PostgreSQL only when explicitly selected with its
@@ -37,7 +37,7 @@ script-execution policy on `npm.ps1`). Run them from `ecommerce-backend`.
 | `npm.cmd run data:import -- --skip-invalid` | Same, importing only valid records and listing every skipped one |
 | `npm.cmd run data:verify` | Compares PostgreSQL with MongoDB field by field. Read-only on both |
 | `npm.cmd run data:rollback -- --confirm` | Removes imported data (guarded; see Rollback) |
-| `npm.cmd run sessions:cleanup` | Counts cookie sessions that expired or were revoked more than 7 days ago; `-- --confirm` deletes them (`--retention-days N`). Never runs automatically |
+| `npm.cmd run sessions:cleanup` | Counts cookie sessions that expired or were revoked more than 7 days ago; `-- --confirm` deletes them and ended rate-limit windows (`--retention-days N`). Never runs automatically |
 | `npm.cmd run test:db` | Schema and data-migration tests (Docker required; never the compose database) |
 
 Compiled equivalents for a deployed build: `node dist\scripts\dbMigrate.js up`
@@ -161,6 +161,11 @@ products (referenced by id only)          data_import_runs (audit)
 - **Integrity.** A trigger keeps the id, token hash, owner, creation time and absolute expiry immutable, and makes revocation one-way; CHECKs keep the idle expiry within the absolute one.
 - **Cleanup.** Only `sessions:cleanup -- --confirm` deletes rows (expired or revoked sessions past the retention period).
 - **Rollback guard.** `data:rollback` refuses while any session exists and lists the table in its TRUNCATE. The down migration signs out every cookie session; bearer tokens are unaffected.
+
+### 0005_auth_rate_limits
+
+- **Shared authentication rate limits (Phase 5C).** `auth_rate_limits` holds one fixed-window counter per key, the SHA-256 of the rule and the client address or email (neither is stored). One atomic `INSERT … ON CONFLICT` per attempt, on the database clock, so every API instance enforces the same limits.
+- **Operational data.** Never migrated or reconciled; ended windows are removed by `sessions:cleanup -- --confirm`. With MongoDB users, the same counters live in the `authRateLimits` collection (TTL index), which the MongoDB → PostgreSQL extraction ignores.
 
 PostgreSQL is used by the API only for domains selected with `DATA_SOURCE_*`
 (see the backend README). The repositories in `repositories/postgres.ts` use
