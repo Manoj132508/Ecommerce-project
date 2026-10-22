@@ -412,7 +412,10 @@ describe("order status and financial history (0002)", () => {
     )
   ).rows[0];
 
-  const setStatus = (to: string | null, id = ORDER_ID) => sql("UPDATE orders SET status = $2 WHERE id = $1", [id, to]);
+  // 0003: status changes go through the audited function only.
+  const setStatus = (to: string | null, id = ORDER_ID) => sql(
+    "SELECT * FROM change_order_status($1, $2, $3, $4)", [id, to, USER_ID, "test transition"],
+  );
 
   beforeEach(async () => {
     await insertUser();
@@ -471,11 +474,21 @@ describe("order status and financial history (0002)", () => {
     expect((await status())?.status).toBe("cancelled");
   });
 
-  test("legacy orders keep no invented status and cannot be given one", async () => {
+  test("legacy orders keep no invented status; only an audited change may close them (0003)", async () => {
     expect(await status(LEGACY_ORDER_ID)).toEqual({ status: null, status_updated_at: null });
-    await expect(setStatus("delivered", LEGACY_ORDER_ID)).rejects.toMatchObject({
-      message: "order status transition none -> delivered is not allowed",
+    await expect(setStatus("shipped", LEGACY_ORDER_ID)).rejects.toMatchObject({
+      message: "order status transition none -> shipped is not allowed",
     });
+    await setStatus("delivered", LEGACY_ORDER_ID);
+    expect((await status(LEGACY_ORDER_ID))?.status).toBe("delivered");
+  });
+
+  test("a direct UPDATE of status is rejected; only change_order_status() may change it (0003)", async () => {
+    await expect(sql("UPDATE orders SET status = 'processing' WHERE id = $1", [ORDER_ID])).rejects.toMatchObject({
+      code: SQLSTATE.restrictViolation,
+      message: "order status changes must go through change_order_status()",
+    });
+    expect((await status())?.status).toBe("placed");
   });
 
   test("status_updated_at cannot be edited without a status change", async () => {
@@ -505,7 +518,8 @@ describe("order status and financial history (0002)", () => {
     await expect(sql("DELETE FROM orders WHERE id = $1", [ORDER_ID])).rejects.toMatchObject({
       code: SQLSTATE.restrictViolation, message: "orders rows cannot be deleted",
     });
-    await sql("TRUNCATE order_items, orders");
+    // order_status_events references orders (0003), so a controlled TRUNCATE names it too.
+    await sql("TRUNCATE order_status_events, order_items, orders");
     const { rows } = await sql("SELECT (SELECT count(*) FROM orders)::int AS orders, (SELECT count(*) FROM order_items)::int AS lines");
     expect(rows).toEqual([{ orders: 0, lines: 0 }]);
   });

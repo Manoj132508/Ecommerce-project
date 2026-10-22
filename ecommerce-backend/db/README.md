@@ -1,9 +1,11 @@
 # PostgreSQL schema, migrations and data copy
 
-Status: **Phase 3B.** The schema exists, and the MongoDB → PostgreSQL
-copy-and-verify tooling is built and tested. **MongoDB is still the
-application's only database**: no API route reads or writes PostgreSQL, and
-nothing here runs when the server starts. See `../../MIGRATION_PLAN.md`.
+Status: **Phase 3C.** The schema (migrations 0001–0003), the MongoDB →
+PostgreSQL copy-and-verify tooling and the PostgreSQL API repositories are
+built and tested. **MongoDB is still the default and active database for every
+domain**: an API domain uses PostgreSQL only when explicitly selected with its
+`DATA_SOURCE_*` variable, and none is selected today. No migration or data copy
+runs when the server starts. See `../../MIGRATION_PLAN.md`.
 
 Commands below are for **Windows PowerShell** (`npm.cmd` avoids the PowerShell
 script-execution policy on `npm.ps1`). Run them from `ecommerce-backend`.
@@ -142,6 +144,19 @@ products (referenced by id only)          data_import_runs (audit)
 - **Financial history is immutable.** An UPDATE changing the owner, customer, order time, total, legacy flag or creation time is rejected.
 - **Append-only history.** Row DELETEs on `orders` and `order_items` are rejected. Removing imported data is possible only with `TRUNCATE`, which only `data:rollback --confirm` runs.
 - **Audit trail.** `data_import_runs` records every import and rollback: operation, outcome, times, source fingerprint, counts and ids.
+
+### 0003_inventory_and_status_audit
+
+- **Tracked inventory.** `products.inventory_tracked` (default false): checkout enforces and decrements `stock` only for tracked products. No product is tracked today, because imported products have no real stock data.
+- **Audit trail.** `order_status_events` is append-only and records every status change: order, from, to, `changed_by` (a user) and `reason`. This includes the initial `placed`.
+- **Single path for status changes.** `change_order_status(order_id, to_status, changed_by, reason)` is the only way to change a status: it locks the order, validates the transition and writes the audit row. A direct `UPDATE orders SET status` is rejected.
+- **Legacy orders.** An order with no recorded status may be closed by an admin as `delivered` or `cancelled`. Nothing assigns one automatically.
+- **Cancellation.** It is an operational status only. Order totals stay immutable, and refunds are not modelled.
+- **Rollback guard.** Because the audit table references `orders`, `data:rollback` lists it in its TRUNCATE and refuses when it holds any row.
+
+PostgreSQL is used by the API only for domains selected with `DATA_SOURCE_*`
+(see the backend README). The repositories in `repositories/postgres.ts` use
+parameterised SQL only.
 
 Conventions:
 - **Money:** `integer` cents.

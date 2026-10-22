@@ -1,6 +1,5 @@
 import type { RequestHandler } from "express";
-import DeliveryOption from "../models/DeliveryOption.js";
-import Product from "../models/Product.js";
+import type { DeliveryOptionRepository, ProductDetails, ProductRepository } from "../repositories/types.js";
 import type { DeleteProductResponse, ErrorResponse } from "../types/api.js";
 import { errorMessage, errorName } from "../utils/errors.js";
 import { isProductId } from "../utils/identifiers.js";
@@ -21,19 +20,6 @@ interface ProductFormBody {
   price?: unknown;
   stock?: unknown;
   highlights?: unknown;
-}
-
-interface ProductDetails {
-  name: string;
-  description: string;
-  howItWorks: string;
-  highlights: string[];
-  careInstructions: string;
-  image: string;
-  category: string;
-  stock: number;
-  priceCents: number;
-  keywords: string[];
 }
 
 const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | null => {
@@ -86,113 +72,106 @@ const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | 
   };
 };
 
-// GET /api/products
-export const getProducts: RequestHandler<NoParams> = async (req, res) => {
-  try {
-    const products = await Product.find().sort({ createdAt: 1 });
-
-    res.json(products);
-  } catch (error) {
-    res.status(500).json({ message: errorMessage(error) });
-  }
-};
-
-// POST /api/products
-export const createProduct: RequestHandler<NoParams, unknown, ProductFormBody | undefined> = async (req, res) => {
-  try {
-    const productDetails = getProductDetails(req.body);
-
-    if (!productDetails) {
-      return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+export function createProductController(products: ProductRepository, deliveryOptions: DeliveryOptionRepository) {
+  // GET /api/products
+  const getProducts: RequestHandler<NoParams> = async (req, res) => {
+    try {
+      res.json(await products.list());
+    } catch (error) {
+      res.status(500).json({ message: errorMessage(error) });
     }
+  };
 
-    const product = await Product.create({
-      ...productDetails,
-      rating: { stars: 0, count: 0 },
-    });
+  // POST /api/products
+  const createProduct: RequestHandler<NoParams, unknown, ProductFormBody | undefined> = async (req, res) => {
+    try {
+      const productDetails = getProductDetails(req.body);
 
-    return res.status(201).json(product);
-  } catch (error) {
-    if (errorName(error) === "ValidationError") {
-      return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      if (!productDetails) {
+        return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      }
+
+      return res.status(201).json(await products.create(productDetails));
+    } catch (error) {
+      if (errorName(error) === "ValidationError") {
+        return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      }
+
+      console.error("Create product failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to create product" } satisfies ErrorResponse);
     }
+  };
 
-    console.error("Create product failed:", errorMessage(error));
-    return res.status(500).json({ message: "Unable to create product" } satisfies ErrorResponse);
-  }
-};
+  // PUT /api/products/:productId
+  const updateProduct: RequestHandler<ProductParams, unknown, ProductFormBody | undefined> = async (req, res) => {
+    try {
+      if (!isProductId(req.params.productId)) {
+        return res.status(400).json(invalidProductId);
+      }
 
-// PUT /api/products/:productId
-export const updateProduct: RequestHandler<ProductParams, unknown, ProductFormBody | undefined> = async (req, res) => {
-  try {
-    if (!isProductId(req.params.productId)) {
-      return res.status(400).json(invalidProductId);
+      const productDetails = getProductDetails(req.body);
+
+      if (!productDetails) {
+        return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      }
+
+      const product = await products.update(req.params.productId, productDetails);
+
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
+      }
+
+      return res.json(product);
+    } catch (error) {
+      if (errorName(error) === "ValidationError") {
+        return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      }
+
+      console.error("Update product failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to update product" } satisfies ErrorResponse);
     }
+  };
 
-    const productDetails = getProductDetails(req.body);
+  // DELETE /api/products/:productId
+  const deleteProduct: RequestHandler<ProductParams, DeleteProductResponse | ErrorResponse> = async (req, res) => {
+    try {
+      if (!isProductId(req.params.productId)) {
+        return res.status(400).json(invalidProductId);
+      }
 
-    if (!productDetails) {
-      return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
+      const deleted = await products.delete(req.params.productId);
+
+      if (!deleted) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      return res.json({ id: deleted.id });
+    } catch (error) {
+      console.error("Delete product failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to delete product" });
     }
+  };
 
-    const product = await Product.findByIdAndUpdate(
-      req.params.productId,
-      productDetails,
-      { new: true, runValidators: true }
-    );
+  // GET /api/delivery-options
+  const getDeliveryOptions: RequestHandler<NoParams> = async (req, res) => {
+    try {
+      const options = await deliveryOptions.list();
 
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
+      if (req.query.expand === "estimatedDeliveryTime") {
+        const optionsWithDates = options.map((option) => ({
+          ...option,
+          estimatedDeliveryTimeMs:
+            Date.now() + option.deliveryDays * 24 * 60 * 60 * 1000
+        }));
+
+        return res.json(optionsWithDates);
+      }
+
+      return res.json(options);
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
     }
+  };
 
-    return res.json(product);
-  } catch (error) {
-    if (errorName(error) === "ValidationError") {
-      return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
-    }
-
-    console.error("Update product failed:", errorMessage(error));
-    return res.status(500).json({ message: "Unable to update product" } satisfies ErrorResponse);
-  }
-};
-
-// DELETE /api/products/:productId
-export const deleteProduct: RequestHandler<ProductParams, DeleteProductResponse | ErrorResponse> = async (req, res) => {
-  try {
-    if (!isProductId(req.params.productId)) {
-      return res.status(400).json(invalidProductId);
-    }
-
-    const product = await Product.findByIdAndDelete(req.params.productId);
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    return res.json({ id: product.id });
-  } catch (error) {
-    console.error("Delete product failed:", errorMessage(error));
-    return res.status(500).json({ message: "Unable to delete product" });
-  }
-};
-
-// GET /api/delivery-options
-export const getDeliveryOptions: RequestHandler<NoParams> = async (req, res) => {
-  try {
-    const deliveryOptions = await DeliveryOption.find().sort({ createdAt: 1 });
-
-    if (req.query.expand === "estimatedDeliveryTime") {
-      const optionsWithDates = deliveryOptions.map((option) => ({
-        ...option.toJSON(),
-        estimatedDeliveryTimeMs:
-          Date.now() + option.deliveryDays * 24 * 60 * 60 * 1000
-      }));
-
-      return res.json(optionsWithDates);
-    }
-
-    return res.json(deliveryOptions);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
+  return { getProducts, createProduct, updateProduct, deleteProduct, getDeliveryOptions };
+}

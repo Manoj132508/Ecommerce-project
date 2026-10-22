@@ -1,10 +1,7 @@
 import type { RequestHandler } from "express";
 import { requireUser } from "../middleware/authMiddleware.js";
-import CartItem from "../models/CartItem.js";
-import DeliveryOption from "../models/DeliveryOption.js";
-import Order, { type OrderDocument } from "../models/Order.js";
-import Product from "../models/Product.js";
-import type { CustomerDetails, ErrorResponse, ProductSnapshot } from "../types/api.js";
+import { ORDER_STATUSES, type CartRepository, type OrderRepository, type OrderStatus } from "../repositories/types.js";
+import type { CustomerDetails, ErrorResponse } from "../types/api.js";
 import { errorMessage } from "../utils/errors.js";
 import { isOrderId } from "../utils/identifiers.js";
 
@@ -18,159 +15,66 @@ interface CreateOrderBody {
   customer?: CustomerBody | null;
 }
 
-const addProductDetails = async (order: OrderDocument) => {
-  const products = await Promise.all(
-    order.products.map(async (orderProduct) => {
-      const storedOrderProduct = orderProduct.toObject();
+interface StatusBody {
+  status?: unknown;
+  reason?: unknown;
+}
 
-      if (storedOrderProduct.product) {
-        return storedOrderProduct;
+const invalidOrderId: ErrorResponse = { message: "Invalid order id" };
+const isOrderStatus = (value: unknown): value is OrderStatus => ORDER_STATUSES.some((status) => status === value);
+
+export function createOrderController(orders: OrderRepository, carts: CartRepository) {
+  // GET /api/orders
+  const getOrders: RequestHandler<NoParams> = async (req, res) => {
+    try {
+      const user = requireUser(req);
+      return res.json(await orders.list({ id: user.id, isAdmin: user.isAdmin }, req.query.expand === "products"));
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
+    }
+  };
+
+  // GET /api/orders/:orderId
+  const getOrder: RequestHandler<OrderParams> = async (req, res) => {
+    try {
+      const user = requireUser(req);
+
+      if (!isOrderId(req.params.orderId)) {
+        return res.status(400).json(invalidOrderId);
       }
 
-      // Older orders created before product snapshots still get a best-effort lookup.
-      const legacyProduct = await Product.findById(orderProduct.productId);
+      const order = await orders.get(req.params.orderId, { id: user.id, isAdmin: user.isAdmin }, req.query.expand === "products");
 
-      return {
-        ...storedOrderProduct,
-        product: legacyProduct
-      };
-    })
-  );
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
+      }
 
-  return { ...order.toJSON(), products };
-};
-
-// GET /api/orders
-export const getOrders: RequestHandler<NoParams> = async (req, res) => {
-  try {
-    const user = requireUser(req);
-    const filter = user.isAdmin ? {} : { userId: String(user._id) };
-    const orders = await Order.find(filter).sort({ orderTimeMs: -1 });
-
-    // console.log("Fetching orders:", orders);
-
-    if (req.query.expand === "products") {
-      return res.json(await Promise.all(orders.map(addProductDetails)));
+      return res.json(order);
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
     }
+  };
 
-    return res.json(orders);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
+  // POST /api/orders
+  const createOrder: RequestHandler<NoParams, unknown, CreateOrderBody | undefined> = async (req, res) => {
+    try {
+      const user = requireUser(req);
+      const customer = req.body?.customer;
 
-// GET /api/orders/:orderId
-export const getOrder: RequestHandler<OrderParams> = async (req, res) => {
-  try {
-    const user = requireUser(req);
+      if (
+        !customer ||
+        typeof customer.fullName !== "string" || !customer.fullName.trim() ||
+        typeof customer.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email.trim()) ||
+        typeof customer.phone !== "string" || !customer.phone.trim() ||
+        typeof customer.address !== "string" || !customer.address.trim() ||
+        typeof customer.city !== "string" || !customer.city.trim() ||
+        typeof customer.postalCode !== "string" || !customer.postalCode.trim() ||
+        typeof customer.country !== "string" || !customer.country.trim()
+      ) {
+        return res.status(400).json({ message: "Please provide complete customer details" } satisfies ErrorResponse);
+      }
 
-    if (!isOrderId(req.params.orderId)) {
-      return res.status(400).json({ message: "Invalid order id" } satisfies ErrorResponse);
-    }
-
-    const order = await Order.findById(req.params.orderId);
-
-    if (
-      !order ||
-      (!user.isAdmin && order.userId !== String(user._id))
-    ) {
-      return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
-    }
-
-    if (req.query.expand === "products") {
-      return res.json(await addProductDetails(order));
-    }
-
-    return res.json(order);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
-
-// POST /api/orders
-export const createOrder: RequestHandler<NoParams, unknown, CreateOrderBody | undefined> = async (req, res) => {
-  try {
-    const user = requireUser(req);
-    const customer = req.body?.customer;
-
-    if (
-      !customer ||
-      typeof customer.fullName !== "string" || !customer.fullName.trim() ||
-      typeof customer.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email.trim()) ||
-      typeof customer.phone !== "string" || !customer.phone.trim() ||
-      typeof customer.address !== "string" || !customer.address.trim() ||
-      typeof customer.city !== "string" || !customer.city.trim() ||
-      typeof customer.postalCode !== "string" || !customer.postalCode.trim() ||
-      typeof customer.country !== "string" || !customer.country.trim()
-    ) {
-      return res.status(400).json({ message: "Please provide complete customer details" } satisfies ErrorResponse);
-    }
-
-    const cartItems = await CartItem.find().sort({ createdAt: 1 });
-
-    if (cartItems.length === 0) {
-      return res.status(400).json({ message: "Cart is empty" } satisfies ErrorResponse);
-    }
-
-    const cartDetails = await Promise.all(
-      cartItems.map(async (cartItem) => {
-        const [product, deliveryOption] = await Promise.all([
-          Product.findById(cartItem.productId),
-          DeliveryOption.findById(cartItem.deliveryOptionId)
-        ]);
-
-        return { cartItem, product, deliveryOption };
-      })
-    );
-
-    const unavailableProductIds = cartDetails
-      .filter(({ product }) => !product)
-      .map(({ cartItem }) => cartItem.productId);
-
-    if (unavailableProductIds.length > 0) {
-      return res.status(409).json({
-        message: "Remove unavailable products from your cart before placing the order",
-        unavailableProductIds
-      });
-    }
-
-    if (cartDetails.some(({ deliveryOption }) => !deliveryOption)) {
-      return res.status(400).json({ message: "A cart item has an invalid delivery option" } satisfies ErrorResponse);
-    }
-
-    // Both checks above guarantee every line has a product and a delivery
-    // option; this narrows the types without dropping or reordering lines.
-    const checkedDetails = cartDetails.flatMap(({ cartItem, product, deliveryOption }) => (
-      product && deliveryOption ? [{ cartItem, product, deliveryOption }] : []
-    ));
-
-    let totalCostBeforeTaxCents = 0;
-
-    const products = checkedDetails.map(({ cartItem, product, deliveryOption }) => {
-      totalCostBeforeTaxCents +=
-        product.priceCents * cartItem.quantity + deliveryOption.priceCents;
-
-      const snapshot: ProductSnapshot = {
-        id: product.id,
-        image: product.image,
-        name: product.name,
-        priceCents: product.priceCents,
-        description: product.description,
-        category: product.category
-      };
-
-      return {
-        productId: cartItem.productId,
-        product: snapshot,
-        quantity: cartItem.quantity,
-        estimatedDeliveryTimeMs:
-          Date.now() + deliveryOption.deliveryDays * 24 * 60 * 60 * 1000
-      };
-    });
-
-    const order = await Order.create({
-      userId: String(user._id),
-      customer: {
+      const result = await orders.checkout(carts.ownership === "per-user" ? user.id : null, user, {
         fullName: customer.fullName.trim(),
         email: customer.email.trim().toLowerCase(),
         phone: customer.phone.trim(),
@@ -178,15 +82,71 @@ export const createOrder: RequestHandler<NoParams, unknown, CreateOrderBody | un
         city: customer.city.trim(),
         postalCode: customer.postalCode.trim(),
         country: customer.country.trim()
-      },
-      orderTimeMs: Date.now(),
-      totalCostCents: Math.round(totalCostBeforeTaxCents * 1.1),
-      products
-    });
+      });
 
-    await CartItem.deleteMany();
-    return res.status(201).json(order);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
+      switch (result.kind) {
+        case "empty":
+          return res.status(400).json({ message: "Cart is empty" } satisfies ErrorResponse);
+        case "unavailable":
+          return res.status(409).json({
+            message: "Remove unavailable products from your cart before placing the order",
+            unavailableProductIds: result.productIds
+          });
+        case "invalid-delivery":
+          return res.status(400).json({ message: "A cart item has an invalid delivery option" } satisfies ErrorResponse);
+        case "insufficient-stock":
+          return res.status(409).json({
+            message: "Some products do not have enough stock for this order",
+            insufficientStockProductIds: result.productIds
+          });
+        case "placed":
+          return res.status(201).json(result.order);
+      }
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
+    }
+  };
+
+  // PATCH /api/orders/:orderId/status (admin). Audited; only allowed transitions.
+  // Cancelling never changes the order total; refunds are a separate process.
+  const updateOrderStatus: RequestHandler<OrderParams, unknown, StatusBody | undefined> = async (req, res) => {
+    try {
+      const admin = requireUser(req);
+
+      if (!isOrderId(req.params.orderId)) {
+        return res.status(400).json(invalidOrderId);
+      }
+
+      const status = req.body?.status;
+      const reason = req.body?.reason;
+
+      if (!isOrderStatus(status)) {
+        return res.status(400).json({ message: `Status must be one of ${ORDER_STATUSES.join(", ")}` } satisfies ErrorResponse);
+      }
+
+      if (typeof reason !== "string" || !reason.trim() || reason.length > 500) {
+        return res.status(400).json({ message: "Provide a reason for the status change (at most 500 characters)" } satisfies ErrorResponse);
+      }
+
+      const result = await orders.changeStatus(req.params.orderId, status, admin, reason.trim());
+
+      switch (result.kind) {
+        case "changed":
+          return res.json(result.order);
+        case "not-found":
+          return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
+        case "not-allowed":
+          return res.status(409).json({ message: result.message } satisfies ErrorResponse);
+        case "unsupported":
+          return res.status(501).json({
+            message: "Order status changes need the PostgreSQL order store (DATA_SOURCE_ORDERS=postgres)"
+          } satisfies ErrorResponse);
+      }
+    } catch (error) {
+      console.error("Order status change failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to change the order status" } satisfies ErrorResponse);
+    }
+  };
+
+  return { getOrders, getOrder, createOrder, updateOrderStatus };
+}

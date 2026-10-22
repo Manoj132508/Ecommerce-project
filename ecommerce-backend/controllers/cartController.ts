@@ -1,7 +1,12 @@
-import type { RequestHandler } from "express";
-import CartItem from "../models/CartItem.js";
-import DeliveryOption from "../models/DeliveryOption.js";
-import Product from "../models/Product.js";
+import type { Request, RequestHandler } from "express";
+import { requireUser } from "../middleware/authMiddleware.js";
+import {
+  CartQuantityError,
+  type CartOwner,
+  type CartRepository,
+  type DeliveryOptionRepository,
+  type ProductRepository,
+} from "../repositories/types.js";
 import type { ErrorResponse, PaymentSummary } from "../types/api.js";
 import { errorMessage } from "../utils/errors.js";
 import { isDeliveryOptionId, isProductId } from "../utils/identifiers.js";
@@ -16,196 +21,212 @@ interface AddCartItemBody {
   quantity?: unknown;
 }
 
-const invalidProductId: ErrorResponse = { message: "Invalid product id" };
-const invalidDeliveryOption: ErrorResponse = { message: "Invalid delivery option" };
-
 interface UpdateCartItemBody {
   quantity?: unknown;
   deliveryOptionId?: unknown;
 }
 
-// GET /api/cart-items
-export const getCartItems: RequestHandler<NoParams> = async (req, res) => {
-  try {
-    const cartItems = await CartItem.find().sort({ createdAt: 1 });
+const invalidProductId: ErrorResponse = { message: "Invalid product id" };
+const invalidDeliveryOption: ErrorResponse = { message: "Invalid delivery option" };
+const quantityRange: ErrorResponse = { message: "Quantity must be between 1 and 10" };
 
-    if (req.query.expand === "product") {
-      const cartWithProducts = await Promise.all(
-        cartItems.map(async (cartItem) => {
-          const product = await Product.findById(cartItem.productId);
+// FD1, for per-user carts: an integer from 1 to 10.
+const isCartQuantity = (value: unknown): value is number => (
+  typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10
+);
 
-          return {
-            ...cartItem.toJSON(),
-            product,
-            unavailable: !product
-          };
-        })
-      );
+export function createCartController(
+  carts: CartRepository,
+  products: ProductRepository,
+  deliveryOptions: DeliveryOptionRepository,
+) {
+  const perUser = carts.ownership === "per-user";
 
-      return res.json(cartWithProducts);
-    }
+  // D1: per-user carts belong to the authenticated user; the legacy shared
+  // MongoDB cart has no owner.
+  const ownerOf = (req: Request<CartItemParams> | Request<NoParams>): CartOwner => (perUser ? requireUser(req).id : null);
 
-    return res.json(cartItems);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
+  // GET /api/cart-items
+  const getCartItems: RequestHandler<NoParams> = async (req, res) => {
+    try {
+      const lines = await carts.list(ownerOf(req));
 
-// POST /api/cart-items
-export const addCartItem: RequestHandler<NoParams, unknown, AddCartItemBody> = async (req, res) => {
-  try {
-    const { productId, quantity } = req.body;
+      if (req.query.expand === "product") {
+        const cartWithProducts = await Promise.all(
+          lines.map(async (line) => {
+            const product = await products.findById(line.productId);
 
-    if (typeof quantity !== "number" || quantity < 1 || quantity > 10) {
-      return res.status(400).json({
-        message: "Quantity must be between 1 and 10"
-      } satisfies ErrorResponse);
-    }
+            return {
+              ...line,
+              product,
+              unavailable: !product
+            };
+          })
+        );
 
-    if (!isProductId(productId)) {
-      return res.status(400).json(invalidProductId);
-    }
-
-    const product = await Product.findById(productId);
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
-    }
-
-    let cartItem = await CartItem.findOne({ productId });
-
-    if (cartItem) {
-      cartItem.quantity += quantity;
-      await cartItem.save();
-    } else {
-      cartItem = await CartItem.create({
-        productId,
-        quantity,
-        deliveryOptionId: "1"
-      });
-    }
-
-    return res.status(201).json(cartItem);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
-
-// PUT /api/cart-items/:productId
-export const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartItemBody> = async (req, res) => {
-  try {
-    if (!isProductId(req.params.productId)) {
-      return res.status(400).json(invalidProductId);
-    }
-
-    const cartItem = await CartItem.findOne({
-      productId: req.params.productId
-    });
-
-    if (!cartItem) {
-      return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
-    }
-
-    const { quantity, deliveryOptionId } = req.body;
-
-    if (quantity !== undefined) {
-      if (typeof quantity !== "number" || quantity < 1) {
-        return res.status(400).json({
-          message: "Quantity must be greater than 0"
-        } satisfies ErrorResponse);
+        return res.json(cartWithProducts);
       }
 
-      cartItem.quantity = quantity;
+      return res.json(lines);
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
     }
+  };
 
-    if (deliveryOptionId !== undefined) {
-      if (!isDeliveryOptionId(deliveryOptionId)) {
-        return res.status(400).json(invalidDeliveryOption);
+  // POST /api/cart-items
+  const addCartItem: RequestHandler<NoParams, unknown, AddCartItemBody> = async (req, res) => {
+    try {
+      const { productId, quantity } = req.body;
+      const validQuantity = perUser
+        ? isCartQuantity(quantity)
+        : typeof quantity === "number" && quantity >= 1 && quantity <= 10;
+
+      if (!validQuantity || typeof quantity !== "number") {
+        return res.status(400).json(quantityRange);
       }
 
-      const deliveryOption = await DeliveryOption.findById(deliveryOptionId);
-
-      if (!deliveryOption) {
-        return res.status(400).json(invalidDeliveryOption);
+      if (!isProductId(productId)) {
+        return res.status(400).json(invalidProductId);
       }
 
-      cartItem.deliveryOptionId = deliveryOptionId;
-    }
-
-    await cartItem.save();
-    return res.json(cartItem);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
-
-// DELETE /api/cart-items/:productId
-export const deleteCartItem: RequestHandler<CartItemParams> = async (req, res) => {
-  try {
-    if (!isProductId(req.params.productId)) {
-      return res.status(400).json(invalidProductId);
-    }
-
-    const cartItem = await CartItem.findOne({
-      productId: req.params.productId
-    });
-
-    if (!cartItem) {
-      return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
-    }
-
-    await cartItem.deleteOne();
-    return res.status(204).send();
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
-
-// GET /api/payment-summary
-export const getPaymentSummary: RequestHandler<NoParams> = async (req, res) => {
-  try {
-    const cartItems = await CartItem.find();
-    let totalItems = 0;
-    let productCostCents = 0;
-    let shippingCostCents = 0;
-    const unavailableProductIds: string[] = [];
-
-    for (const cartItem of cartItems) {
-      const product = await Product.findById(cartItem.productId);
+      const product = await products.findById(productId);
 
       if (!product) {
-        unavailableProductIds.push(cartItem.productId);
-        continue;
+        return res.status(404).json({ message: "Product not found" } satisfies ErrorResponse);
       }
 
-      const deliveryOption = await DeliveryOption.findById(
-        cartItem.deliveryOptionId
-      );
-
-      if (!deliveryOption) {
-        throw new Error(`Invalid delivery option: ${cartItem.deliveryOptionId}`);
+      return res.status(201).json(await carts.add(ownerOf(req), productId, quantity));
+    } catch (error) {
+      if (error instanceof CartQuantityError) {
+        return res.status(400).json(quantityRange);
       }
-
-      totalItems += cartItem.quantity;
-      productCostCents += product.priceCents * cartItem.quantity;
-      shippingCostCents += deliveryOption.priceCents;
+      return res.status(500).json({ message: errorMessage(error) });
     }
+  };
 
-    const totalCostBeforeTaxCents = productCostCents + shippingCostCents;
-    const taxCents = Math.round(totalCostBeforeTaxCents * 0.1);
+  // PUT /api/cart-items/:productId
+  const updateCartItem: RequestHandler<CartItemParams, unknown, UpdateCartItemBody> = async (req, res) => {
+    try {
+      if (!isProductId(req.params.productId)) {
+        return res.status(400).json(invalidProductId);
+      }
 
-    const summary: PaymentSummary = {
-      totalItems,
-      productCostCents,
-      shippingCostCents,
-      totalCostBeforeTaxCents,
-      taxCents,
-      totalCostCents: totalCostBeforeTaxCents + taxCents,
-      unavailableProductIds
-    };
+      const owner = ownerOf(req);
+      const line = await carts.find(owner, req.params.productId);
 
-    return res.json(summary);
-  } catch (error) {
-    return res.status(500).json({ message: errorMessage(error) });
-  }
-};
+      if (!line) {
+        return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
+      }
+
+      const { quantity, deliveryOptionId } = req.body;
+      const changes: { quantity?: number; deliveryOptionId?: string } = {};
+
+      if (quantity !== undefined) {
+        if (perUser) {
+          if (!isCartQuantity(quantity)) {
+            return res.status(400).json(quantityRange);
+          }
+        } else if (typeof quantity !== "number" || quantity < 1) {
+          return res.status(400).json({
+            message: "Quantity must be greater than 0"
+          } satisfies ErrorResponse);
+        }
+
+        changes.quantity = quantity;
+      }
+
+      if (deliveryOptionId !== undefined) {
+        if (!isDeliveryOptionId(deliveryOptionId)) {
+          return res.status(400).json(invalidDeliveryOption);
+        }
+
+        const deliveryOption = await deliveryOptions.findById(deliveryOptionId);
+
+        if (!deliveryOption) {
+          return res.status(400).json(invalidDeliveryOption);
+        }
+
+        changes.deliveryOptionId = deliveryOptionId;
+      }
+
+      const updated = await carts.update(owner, req.params.productId, changes);
+
+      if (!updated) {
+        return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
+      }
+
+      return res.json(updated);
+    } catch (error) {
+      if (error instanceof CartQuantityError) {
+        return res.status(400).json(quantityRange);
+      }
+      return res.status(500).json({ message: errorMessage(error) });
+    }
+  };
+
+  // DELETE /api/cart-items/:productId
+  const deleteCartItem: RequestHandler<CartItemParams> = async (req, res) => {
+    try {
+      if (!isProductId(req.params.productId)) {
+        return res.status(400).json(invalidProductId);
+      }
+
+      if (!(await carts.remove(ownerOf(req), req.params.productId))) {
+        return res.status(404).json({ message: "Cart item not found" } satisfies ErrorResponse);
+      }
+
+      return res.status(204).send();
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
+    }
+  };
+
+  // GET /api/payment-summary
+  const getPaymentSummary: RequestHandler<NoParams> = async (req, res) => {
+    try {
+      const lines = await carts.list(ownerOf(req));
+      let totalItems = 0;
+      let productCostCents = 0;
+      let shippingCostCents = 0;
+      const unavailableProductIds: string[] = [];
+
+      for (const line of lines) {
+        const product = await products.findById(line.productId);
+
+        if (!product) {
+          unavailableProductIds.push(line.productId);
+          continue;
+        }
+
+        const deliveryOption = await deliveryOptions.findById(line.deliveryOptionId);
+
+        if (!deliveryOption) {
+          throw new Error(`Invalid delivery option: ${line.deliveryOptionId}`);
+        }
+
+        totalItems += line.quantity;
+        productCostCents += product.priceCents * line.quantity;
+        shippingCostCents += deliveryOption.priceCents;
+      }
+
+      const totalCostBeforeTaxCents = productCostCents + shippingCostCents;
+      const taxCents = Math.round(totalCostBeforeTaxCents * 0.1);
+
+      const summary: PaymentSummary = {
+        totalItems,
+        productCostCents,
+        shippingCostCents,
+        totalCostBeforeTaxCents,
+        taxCents,
+        totalCostCents: totalCostBeforeTaxCents + taxCents,
+        unavailableProductIds
+      };
+
+      return res.json(summary);
+    } catch (error) {
+      return res.status(500).json({ message: errorMessage(error) });
+    }
+  };
+
+  return { getCartItems, addCartItem, updateCartItem, deleteCartItem, getPaymentSummary };
+}

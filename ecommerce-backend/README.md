@@ -35,6 +35,43 @@ Imports use `.js` extensions (for example `./models/User.js`) even though the
 files are `.ts`. Node's ESM resolution requires this, and TypeScript, `tsx` and
 Vitest all map them to the `.ts` sources.
 
+## Data sources (MongoDB by default)
+
+Every domain is served by **MongoDB unless explicitly switched**. Each domain
+can be moved to PostgreSQL independently with an environment variable
+(Phase 3C of `MIGRATION_PLAN.md`):
+
+| Variable | Domain | Values |
+| --- | --- | --- |
+| `DATA_SOURCE_DELIVERY_OPTIONS` | delivery options | `mongo` (default) / `postgres` |
+| `DATA_SOURCE_PRODUCTS` | products | `mongo` (default) / `postgres` |
+| `DATA_SOURCE_USERS` | users and authentication | `mongo` (default) / `postgres` |
+| `DATA_SOURCE_CARTS` | carts | `mongo` (default) / `postgres` |
+| `DATA_SOURCE_ORDERS` | orders | `mongo` (default) / `postgres` |
+
+The server refuses to start on an invalid value or an inconsistent
+combination:
+
+- Carts and orders must use the same source.
+- PostgreSQL carts and orders also need PostgreSQL users, products and delivery options.
+- PostgreSQL needs `DATABASE_URL` (from `.env.postgres` locally) and fully applied migrations (`npm run db:migrate`).
+- With `NODE_ENV=production`, any PostgreSQL selection also needs `POSTGRES_PRODUCTION_ENABLED=true`.
+
+All of these are deliberate deployment decisions; none is set today.
+
+When carts are served by PostgreSQL, every cart route requires a bearer token
+and each user has their own cart, with integer quantities from 1 to 10. When
+orders are served by PostgreSQL, orders carry a `status`, and admins can change
+it with `PATCH /api/orders/:orderId/status` (`{ "status", "reason" }`; audited;
+only allowed transitions). With MongoDB orders that endpoint answers 501. All
+intentional differences are listed in `MIGRATION_PLAN.md`.
+
+Code layout:
+- `repositories/types.ts`: the data-access interfaces.
+- `repositories/mongo.ts` and `repositories/postgres.ts`: the two implementations.
+- `config/dataSources.ts`: the selection rules.
+- Controllers use only the repositories.
+
 ## Authentication
 
 ### Register: `POST /api/auth/register`

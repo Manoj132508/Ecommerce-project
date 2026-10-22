@@ -18,6 +18,15 @@ declare global {
       POSTGRES_DB?: string;
       POSTGRES_USER?: string;
       POSTGRES_PASSWORD?: string;
+      /** Per-domain data source, "mongo" (default) or "postgres" (config/dataSources.ts). */
+      DATA_SOURCE_DELIVERY_OPTIONS?: string;
+      DATA_SOURCE_PRODUCTS?: string;
+      DATA_SOURCE_USERS?: string;
+      DATA_SOURCE_CARTS?: string;
+      DATA_SOURCE_ORDERS?: string;
+      /** Must be "true" to select PostgreSQL while NODE_ENV=production. */
+      POSTGRES_PRODUCTION_ENABLED?: string;
+      NODE_ENV?: string;
     }
   }
 }

@@ -1,15 +1,24 @@
 import express, { type Express } from "express";
 import cors from "cors";
 
+import { createProtect } from "./middleware/authMiddleware.js";
+import { createRepositories } from "./repositories/index.js";
+import type { Repositories } from "./repositories/types.js";
 import productRoutes from "./routes/productRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 
+export interface AppOptions {
+  /** Data access per domain. Defaults to MongoDB for every domain. */
+  repositories?: Repositories;
+}
+
 // Builds the Express app without connecting to a database or opening a port,
 // so tests can exercise it in-process. Call after environment variables load.
-export function createApp(): Express {
+export function createApp({ repositories = createRepositories() }: AppOptions = {}): Express {
   const app = express();
+  const protect = createProtect(repositories.users);
 
   // Permit the local Vite app and the deployed storefront to call this API.
   // CLIENT_URL can contain a comma-separated list when more frontends are added.
@@ -49,10 +58,10 @@ export function createApp(): Express {
   });
 
   // Routes
-  app.use("/api/auth", authRoutes);
-  app.use("/api", productRoutes);
-  app.use("/api", cartRoutes);
-  app.use("/api", orderRoutes);
+  app.use("/api/auth", authRoutes(repositories, protect));
+  app.use("/api", productRoutes(repositories, protect));
+  app.use("/api", cartRoutes(repositories, protect));
+  app.use("/api", orderRoutes(repositories, protect));
 
   return app;
 }

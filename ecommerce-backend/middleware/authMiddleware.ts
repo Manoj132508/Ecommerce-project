@@ -1,6 +1,6 @@
 import type { Request, RequestHandler } from "express";
 import jwt, { type JwtPayload } from "jsonwebtoken";
-import User, { type UserDocument } from "../models/User.js";
+import type { AuthUser, UserRepository } from "../repositories/types.js";
 import { errorMessage } from "../utils/errors.js";
 import { isUserId } from "../utils/identifiers.js";
 
@@ -13,7 +13,8 @@ const hasUserId = (decoded: string | JwtPayload): decoded is AuthTokenPayload =>
   typeof decoded !== "string" && typeof decoded.id === "string"
 );
 
-export const protect: RequestHandler = async (req, res, next) => {
+/** Verifies the bearer token and attaches the user, from whichever store holds users. */
+export const createProtect = (users: UserRepository): RequestHandler => async (req, res, next) => {
   const authorization = req.get("Authorization");
   const bearerToken = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
 
@@ -38,7 +39,7 @@ export const protect: RequestHandler = async (req, res, next) => {
   }
 
   try {
-    const user = await User.findById(decoded.id).select("-password");
+    const user = await users.findById(decoded.id);
     if (!user) {
       return res.status(401).json({ message: "Not authorized" });
     }
@@ -56,7 +57,7 @@ export const protect: RequestHandler = async (req, res, next) => {
  * protect first; the throw only replaces the TypeError the JavaScript
  * handlers would have raised reading a property of a missing req.user.
  */
-export function requireUser(req: Request): UserDocument {
+export function requireUser(req: Request): AuthUser {
   if (!req.user) {
     throw new Error("Authenticated user missing: protect must run before this handler");
   }

@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–2, R18, R20 and 3A committed and pushed. Phase 3B (MongoDB → PostgreSQL copy-and-verify tooling) complete locally and awaiting review. MongoDB is still the only application database; no API route uses PostgreSQL. No production database was touched. D1–D4 approved; Phase 3B decisions approved 2026-10-21.**
+Status: **Phases 0–2, R18, R20, 3A and 3B committed and pushed. Phase 3C (PostgreSQL API repositories, opt-in per domain) complete locally and awaiting review. MongoDB is still the default and only active database for every domain; no domain has been switched. No production setting, deployment or production data was touched.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -105,6 +105,7 @@ The production database location is **unknown from the repo** (backend host isn'
 | O1 | `GET /api/orders[?expand=products]` | Bearer | — | `Order[]` by `orderTimeMs` desc; admin sees all |
 | O2 | `GET /api/orders/:orderId[?expand=products]` | Bearer | — | `Order`; 400 **"Invalid order id"** (R18); 404 if not owner (unless admin) |
 | O3 | `POST /api/orders` | Bearer | `{customer:{fullName,email,phone,address,city,postalCode,country}}` | 201 `Order`; 400; 409 `{message,unavailableProductIds}` |
+| O4 | `PATCH /api/orders/:orderId/status` (**new, Phase 3C**) | admin | `{status, reason}` | 200 `Order` (with `status`); 400 invalid id/status/missing reason; 404; 409 transition not allowed; **501 while orders are served by MongoDB** |
 
 `Product` = `{id,image,name,description,howItWorks,highlights[],careInstructions,category,stock,rating:{stars,count},priceCents,keywords[],createdAt,updatedAt}`
 `Order` = `{id,userId?,customer?,orderTimeMs,totalCostCents,products:[{productId,product?,quantity,estimatedDeliveryTimeMs}],createdAt,updatedAt}`
@@ -235,6 +236,11 @@ Field-level conversions:
 | R21 | **Phase 2 changes how the backend starts.** `server.js` no longer exists; production must run `npm ci` (with dev dependencies) → `npm run build` → `npm start` (`node dist/server.js`). A host still running `node server.js`, or installing with `--omit=dev`, fails to start | **High (deploy blocker)** | Nothing deployed. Before deploying `migration/postgres`, update the backend host's build command to `npm ci && npm run build` and the start command to `npm start`. Rollback: redeploy `main` or `pre-pg-migration`, which still use `node server.js` |
 | R22 | **Windows PowerShell corrupts binary output redirected with `>`** (found in Phase 3B: a `pg_dump > file` gained a UTF-8 BOM and was unrestorable) | ~~High~~ **Mitigated** | `db/README.md` documents only in-container `pg_dump -f` + `docker compose cp` (and `-f` for hosted databases). Every documented command was executed and the dump restored. The corrupt file was deleted |
 | R23 | Extraction reads collection by collection, not as one snapshot; writes to a live production MongoDB during an import could produce an inconsistent copy | Medium | Production import only inside an agreed write freeze. Verification compares field by field and flags a changed source fingerprint (Phase 3B decision 4) |
+| R24 | Mixed data sources must stay consistent (for example, PostgreSQL carts with MongoDB users would break foreign keys) | ~~Medium~~ **Mitigated** | `config/dataSources.ts` refuses inconsistent combinations at start-up: carts and orders together; PostgreSQL carts/orders need PostgreSQL users, products and delivery options. 17 unit tests |
+| R25 | Selecting PostgreSQL in production by accident | ~~High~~ **Mitigated** | With `NODE_ENV=production`, any PostgreSQL selection also needs `POSTGRES_PRODUCTION_ENABLED=true` (and `DATABASE_URL`); the server also refuses to start if schema migrations are pending |
+| R26 | Switching carts to PostgreSQL makes cart routes require login (D1). The current frontend calls the cart only when logged in on most pages, but `CheckoutPage` and add-to-cart buttons must be gated before that switch | Medium | Documented as a Phase 4.4 prerequisite; not switched. MongoDB keeps the shared cart until then |
+| R27 | JSON key order of products whose MongoDB document lacked `stock` differs between stores (MongoDB puts `stock` first) | Low | Key order has no meaning in JSON; content verified equal on real data (23/23). The MongoDB path itself is byte-identical to before (48/48) |
+| R28 | The transaction-local flag that authorises `change_order_status()` can be set by any session with the application's database role | Low | It guards against accidental direct updates, not a compromised application. Every change is still audited in `order_status_events` (append-only) |
 
 ### Approved decisions (2026-10-21)
 
@@ -409,15 +415,77 @@ Behaviour changes: **none in API responses.** Internal-only differences:
 - Production PostgreSQL: preferably managed **Render Postgres in the backend's region**. Compile the runner into the build; don't run it automatically.
 
 
+**Phase 3C (PostgreSQL API repositories): complete locally, awaiting approval before any domain is switched.** MongoDB remains the default for every domain.
+
+- [x] 3C.1 **Repository layer** (`repositories/`): interfaces for delivery options, products, users, carts and orders (`types.ts`):
+  - **MongoDB implementations** (`mongo.ts`): the previous Mongoose queries, unchanged. Products and orders are returned as documents, so MongoDB-mode JSON stays byte-identical.
+  - **PostgreSQL implementations** (`postgres.ts`): parameterised `pg` SQL only.
+  - **Shared controllers.** Controllers, routes and the `protect` middleware now depend on repositories, not Mongoose. Cart and order code reaches products and delivery options through those domains' repositories.
+- [x] 3C.2 **Per-domain selection** (`config/dataSources.ts`):
+  - Variables `DATA_SOURCE_DELIVERY_OPTIONS`, `DATA_SOURCE_PRODUCTS`, `DATA_SOURCE_USERS`, `DATA_SOURCE_CARTS` and `DATA_SOURCE_ORDERS`, each `mongo` (default) or `postgres`; anything else refuses to start.
+  - Consistency rules (R24).
+  - Production guard `POSTGRES_PRODUCTION_ENABLED=true` (R25).
+  - With all defaults, `server.ts` behaves exactly as before. With a PostgreSQL selection it loads `.env.postgres`, refuses to start if migrations are pending, and logs the selection.
+- [x] 3C.3 **Migration 0003** (`inventory_and_status_audit`):
+  - `products.inventory_tracked` (default false).
+  - Append-only `order_status_events` audit table.
+  - `change_order_status()` is the only way to change a status; a direct UPDATE is rejected.
+  - Legacy orders (no status) may be closed by an admin as `delivered` or `cancelled`.
+  - The data rollback (Phase 3B) also refuses when any status event exists.
+- [x] 3C.4 **Users (D2).** Existing ObjectId strings are kept; new users get application-generated ObjectId hex ids; bcrypt cost 12; MongoDB-era tokens keep working.
+- [x] 3C.5 **Per-user carts (D1, FD1, D3).**
+  - With `DATA_SOURCE_CARTS=postgres`, every cart route requires login and only touches the caller's cart.
+  - Quantities must be integers 1–10, including after merging, enforced by the CHECK constraint and an atomic upsert.
+  - Deleted products stay as unavailable lines.
+- [x] 3C.6 **Transactional checkout.** One transaction that:
+  - locks the buyer's cart row (concurrent checkouts produce one order);
+  - snapshots name, image, price, description and category;
+  - records a "placed" audit event;
+  - clears **only** the buyer's cart.
+
+  Stock is decremented and enforced **only** for `inventory_tracked` products (none today), with conditional updates in product-id order; it never goes negative. Any failure rolls everything back.
+- [x] 3C.7 **Order history.** Legacy orders keep their shape: no invented owner, customer, snapshot or status. Snapshots are immutable. Cancellation is a status only: totals never change, and refunds are not modelled.
+- [x] 3C.8 **Admin status endpoint** `PATCH /api/orders/:orderId/status` (contract O4): audited, allowed transitions only, 501 while orders are served by MongoDB.
+- [x] 3C.9 **Tests.**
+  - `npm test`: **190 passed** (173 existing, unchanged, plus 17 data-source tests).
+  - `npm run test:db`: **190 passed** (121 schema/runner/data copy, 28 PostgreSQL API, 41 compatibility).
+  - Mutation checks: 3 repository bugs (cart owner leak, clearing every cart, missing stock guard) and 1 response-shape drift were each caught.
+- [x] 3C.10 **Compatibility verified.**
+  - MongoDB mode byte-identical to before Phase 3C on real data (**48/48**).
+  - Fixture comparison MongoDB vs PostgreSQL (**41 tests**: reads, invalid input, writes, checkout totals and snapshots).
+  - Real-data comparison of the compiled app on dev MongoDB vs dev PostgreSQL (**23/23 equal**, 19/23 also equal in key order; R27).
+
+#### Intentional API differences when a domain is served by PostgreSQL
+
+| # | Difference | Why |
+| --- | --- | --- |
+| 1 | Cart routes require a bearer token (401 without), and each user has their own cart | D1 (security fix for R2) |
+| 2 | Cart quantity must be an integer 1–10 on add, merge and update (MongoDB accepted `1.5`, merges above 10 and any PUT quantity ≥ 1); the PUT error message is "Quantity must be between 1 and 10" | FD1 |
+| 3 | Cart line `id` is a UUID (MongoDB: ObjectId) | New table; nothing relies on the format |
+| 4 | Orders include `status` (`null` for legacy orders); admins can change it via O4 (MongoDB: 501) | Phase 3B decision: controlled status transitions |
+| 5 | An order whose owner was deleted has no `userId` (MongoDB shows the dangling id) | Phase 3B decision: NULL ownership, audited |
+| 6 | Checkout can return 409 `insufficientStockProductIds` for inventory-tracked products | Stock protection; no product is tracked today |
+| 7 | JSON key order may differ for products MongoDB stored without `stock` | R27; content identical |
+
+All other responses (status codes, bodies and error messages) are identical, as verified above.
+
+#### Phase 3C decisions taken (please confirm)
+
+- Legacy orders may be closed **only** as `delivered` or `cancelled`, by an admin, with a reason; nothing else.
+- `inventory_tracked` stays false for every product until real inventory data and rules exist. No API sets it yet.
+- A cancelled order does not restock tracked inventory automatically (left for the inventory/refund design).
+- A status change needs a reason (1–500 characters), stored in the audit trail.
+
+
 Remaining Phase 3 work (not started; Phase 3C / Phase 4 preparation):
 
-- [ ] 3.1 `db/pool.ts` (typed wrapper over `config/postgres.ts`; `withTransaction(fn)` helper; fixes R19)
+- [x] 3.1 ~~`db/pool.ts`~~ Done in Phase 3C (`withTransaction`, `verifySchemaCurrent`)
 - [x] 3.2 ~~`db/migrations/001_init.sql` + runner~~ Done in Phase 3A
-- [ ] 3.3 Repository interfaces per domain (`ProductRepo`, `DeliveryOptionRepo`, `UserRepo`, `CartRepo`, `OrderRepo`) with a Mongo implementation (wrapping current Mongoose code) and a Postgres implementation (parameterised SQL only — no string-built SQL, ever)
-- [ ] 3.4 Per-domain switch `DATA_SOURCE_<DOMAIN>=mongo|postgres` (default `mongo`)
+- [x] 3.3 ~~Repository interfaces~~ Done in Phase 3C (`repositories/`)
+- [x] 3.4 ~~Per-domain switch~~ Done in Phase 3C (`config/dataSources.ts`; defaults all `mongo`)
 - [x] 3.5 ~~ETL script~~ Done in Phase 3B (`data:import`, `db/dataMigration/`)
 - [x] 3.6 ~~verify script~~ Done in Phase 3B (`data:verify`)
-- [ ] 3.7 Run the characterisation suite against each Postgres repo implementation
+- [x] 3.7 ~~Characterisation suite against PostgreSQL~~ Done in Phase 3C (`test/db/api.postgres.test.ts`, `test/db/api.compatibility.test.ts`)
 
 **Acceptance:** `db:migrate` creates the schema on an empty DB and is a no-op on rerun (**met in 3A**); ETL + verify exit 0 twice in a row; characterisation suite passes with every `DATA_SOURCE_*=postgres`.
 **Rollback:** nothing user-facing changed; `npm run db:rollback -- --confirm` or restore the pre-migration `pg_dump` (`db/README.md`).
@@ -593,8 +661,11 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Pushed to `origin/migration/postgres`: Phase 1 (`ced0ff8`), Phase 2 (`512f759`), R18 (`fd6b6e1`), R20 (`35c4a46`), Phase 3A (`b7ae2b0`). Phase 3B is complete locally and awaiting review. **No API cut-over, Next.js work or deployment has started.**
+Pushed to `origin/migration/postgres`: Phases 1, 2, R18, R20, 3A, 3B (latest `6a4a560`). Phase 3C is complete locally and awaiting review. **No domain has been switched to PostgreSQL.**
 
-1. Owner: review Phase 3B (migration 0002, `db/dataMigration/`, `db/README.md`) and approve committing and pushing it.
-2. Owner: answer the outstanding decisions after Phase 3B, above all the production MongoDB provider (1) and the Render Postgres instance (2).
-3. Then Phase 3C / Phase 4 preparation: `db/pool.ts` and the repositories behind `DATA_SOURCE_*` switches, with the characterisation suite run against PostgreSQL. MongoDB stays authoritative until each domain is switched.
+1. Owner: review Phase 3C (`repositories/`, `config/dataSources.ts`, migration 0003, the O4 endpoint, the intentional differences) and approve committing/pushing it.
+2. Owner: confirm the "Phase 3C decisions taken" above.
+3. Owner: still open from Phase 3B: the production MongoDB provider and the Render Postgres instance.
+4. Then Phase 4, switching domains one at a time, each behind its `DATA_SOURCE_*` variable with a re-run of `data:import` + `data:verify` just before the switch:
+   - delivery options → products → users;
+   - then carts + orders together, after the frontend gates the cart behind login (R26).
