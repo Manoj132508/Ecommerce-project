@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { EnvironmentError, parseAppName, parseBackendOrigin, parseClientIpForwarding } from "./parse";
+import { EnvironmentError, parseAppName, parseBackendOrigin, parseClientIpForwarding, parseSiteUrl } from "./parse";
 
 describe("BACKEND_ORIGIN", () => {
   test.each([
@@ -44,4 +44,11 @@ test("app name falls back to a default", () => {
   expect(parseAppName(undefined)).toBe("Ecommerce");
   expect(parseAppName("  Shop ")).toBe("Shop");
   expect(parseAppName("x".repeat(61))).toBe("Ecommerce");
+});
+
+test("site URL: an exact http(s) origin, otherwise unset", () => {
+  expect(parseSiteUrl("https://shop.example.com")?.origin).toBe("https://shop.example.com");
+  expect(parseSiteUrl(undefined)).toBeUndefined();
+  expect(parseSiteUrl("https://shop.example.com/path")).toBeUndefined();
+  expect(parseSiteUrl("javascript:alert(1)")).toBeUndefined();
 });

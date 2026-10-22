@@ -3,7 +3,9 @@
 // removed whenever the signed-in identity changes.
 
 export const sessionQueryKey = ["auth", "session"] as const;
-export const productsQueryKey = ["products"] as const;
+
+/** The signed-in user's cart (cart pages move here in the next stage). */
+export const cartQueryRoot = ["cart"] as const;
 
 export const USER_SCOPED_ROOTS: readonly string[] = ["cart", "checkout", "orders", "order"];
 

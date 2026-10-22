@@ -34,9 +34,9 @@ describe("apiFetch", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  test("sign-in is the one unsafe request without a CSRF token", async () => {
+  test("sign-in and account creation are the only unsafe requests without a CSRF token", async () => {
     const fetchImpl = fakeFetch(200, {});
-    await apiFetch("/auth/session", { method: "POST", body: {}, signIn: true }, fetchImpl);
+    await apiFetch("/auth/session", { method: "POST", body: {}, noSession: true }, fetchImpl);
     expect(fetchImpl.mock.calls[0]?.[1]?.headers).not.toHaveProperty("X-CSRF-Token");
   });
 

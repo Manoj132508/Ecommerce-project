@@ -6,6 +6,16 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  images: {
+    // The optimiser only serves files under public/images (product photos and
+    // rating stars), never query-string variants, and fetches no remote hosts.
+    // Off-site https product images are rendered unoptimised instead.
+    localPatterns: [{ pathname: "/images/**", search: "" }],
+    remotePatterns: [],
+    // Catalogue photos are 720×720: no 2K/4K variants are useful.
+    deviceSizes: [640, 750, 828, 1080],
+    imageSizes: [96, 128, 160, 192, 256, 384],
+  },
   async headers() {
     return [
       {

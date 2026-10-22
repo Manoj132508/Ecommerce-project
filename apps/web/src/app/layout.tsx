@@ -6,6 +6,7 @@ import { AppProviders } from "@/providers/AppProviders";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  ...(publicEnv.siteUrl ? { metadataBase: publicEnv.siteUrl } : {}),
   title: { default: publicEnv.appName, template: `%s · ${publicEnv.appName}` },
   description: "Online store",
 };

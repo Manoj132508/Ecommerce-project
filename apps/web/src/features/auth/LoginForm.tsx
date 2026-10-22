@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { useReturnPath } from "@/hooks/useReturnPath";
@@ -61,6 +62,12 @@ export function LoginForm() {
       >
         {signIn.isPending ? "Signing in…" : "Sign in"}
       </button>
+      <p className="text-center text-sm">
+        New here?{" "}
+        <Link href={returnPath === "/" ? "/register" : `/register?from=${encodeURIComponent(returnPath)}`} className="font-medium text-[#198754] underline underline-offset-4">
+          Create an account
+        </Link>
+      </p>
     </form>
   );
 }

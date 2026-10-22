@@ -15,24 +15,19 @@
 // Never touches the development or production databases.
 //
 //   npm run test:e2e        (from apps/web)
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { createRequire } from "node:module";
-import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { CookieJar } from "tough-cookie";
+import {
+  ALL_POSTGRES, BACKEND, backendRequire, createChecker, freePort, opensslPath, request, requireBuilds,
+  start, startThrowawayPostgres, stop, waitFor, WEB,
+} from "./e2e-support.mjs";
 
-const run = promisify(execFile);
-const WEB = fileURLToPath(new URL("..", import.meta.url));
-const BACKEND = path.resolve(WEB, "../../ecommerce-backend");
-const backendRequire = createRequire(path.join(BACKEND, "package.json"));
-const pg = backendRequire("pg");
 const bcrypt = backendRequire("bcryptjs");
 
 const PASSWORD = "e2e-password-123";
@@ -41,130 +36,24 @@ const BOB = { id: "6ad8b3e08afe6f8ad3173cad", email: "bob@example.com" };
 const PRODUCT = "e43638ce-6aa0-4b85-b27f-e1d07eb678c6";
 const CUSTOMER = { fullName: "Ada Lovelace", email: "ada@example.com", phone: "0123", address: "1 Way", city: "London", postalCode: "N1", country: "UK" };
 
-let passed = 0;
-let failed = 0;
-const check = (name, ok, detail = "") => {
-  if (ok) passed += 1; else failed += 1;
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` - ${detail}` : ""}`);
-};
-
-const freePort = () => new Promise((resolve, reject) => {
-  const server = net.createServer();
-  server.listen(0, "127.0.0.1", () => {
-    const { port } = server.address();
-    server.close(() => resolve(port));
-  });
-  server.on("error", reject);
-});
-
-async function waitFor(url, options = {}) {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    try {
-      await request(url, { ...options, jar: null });
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-  throw new Error(`${url} did not start`);
-}
-
-/** HTTP(S) request with a cookie jar, like a browser tab. Never logs cookie values. */
-function request(url, { method = "GET", headers = {}, body, jar, ca, servername } = {}) {
-  return new Promise((resolve, reject) => {
-    (async () => {
-      const target = new URL(url);
-      const cookie = jar ? await jar.getCookieString(url) : "";
-      const options = {
-        method,
-        headers: { ...headers, ...(cookie ? { Cookie: cookie } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
-      };
-      const transport = target.protocol === "https:" ? https : http;
-      const connectHost = target.hostname === "localhost" ? "127.0.0.1" : target.hostname;
-      const call = transport.request({
-        host: connectHost, port: target.port, path: `${target.pathname}${target.search}`,
-        servername: servername ?? target.hostname, ca, ...options,
-        headers: { Host: target.host, ...options.headers },
-      }, (response) => {
-        const chunks = [];
-        response.on("data", (chunk) => chunks.push(chunk));
-        response.on("end", async () => {
-          const setCookies = response.headers["set-cookie"] ?? [];
-          if (jar) for (const line of setCookies) await jar.setCookie(line, url);
-          const text = Buffer.concat(chunks).toString("utf8");
-          let json = null;
-          try { json = text ? JSON.parse(text) : null; } catch { /* HTML */ }
-          resolve({ status: response.statusCode, headers: response.headers, setCookies, text, json });
-        });
-      });
-      call.on("error", reject);
-      if (body) call.write(JSON.stringify(body));
-      call.end();
-    })().catch(reject);
-  });
-}
-
-function start(command, args, options) {
-  const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
-  let log = "";
-  child.stdout.on("data", (chunk) => { log += chunk; });
-  child.stderr.on("data", (chunk) => { log += chunk; });
-  child.log = () => log;
-  return child;
-}
-
-const stop = async (child) => {
-  if (!child || child.exitCode !== null) return;
-  child.kill();
-  await new Promise((resolve) => { child.once("exit", resolve); setTimeout(resolve, 3000); });
-};
-
-function opensslPath() {
-  for (const candidate of ["openssl", "C:/Program Files/Git/usr/bin/openssl.exe", "C:/Program Files/Git/mingw64/bin/openssl.exe"]) {
-    try { execFileSync(candidate, ["version"], { stdio: "ignore" }); return candidate; } catch { /* next */ }
-  }
-  throw new Error("openssl was not found (needed for the HTTPS-equivalent scenario)");
-}
+const { check, result } = createChecker();
 
 async function main() {
-  for (const [label, file] of [["backend build", path.join(BACKEND, "dist/server.js")], ["Next.js build", path.join(WEB, ".next/BUILD_ID")]]) {
-    if (!existsSync(file)) throw new Error(`${label} missing (${file}); run npm run build first`);
-  }
+  requireBuilds();
 
-  // ---------------------------------------------------- throwaway PostgreSQL
-  const dbPassword = randomBytes(18).toString("hex");
-  const { stdout: containerId } = await run("docker", [
-    "run", "--detach", "--rm", "--label", "ecommerce-web.e2e=true",
-    "--env", "POSTGRES_USER=e2e", "--env", `POSTGRES_PASSWORD=${dbPassword}`, "--env", "POSTGRES_DB=e2e",
-    "--publish", "127.0.0.1::5432", "postgres:17-alpine",
-  ]);
-  const container = containerId.trim();
+  const database = await startThrowawayPostgres("e2e");
+  const { databaseUrl, pool } = database;
   const children = [];
   const temp = mkdtempSync(path.join(tmpdir(), "web-e2e-"));
   try {
-    const { stdout: mapped } = await run("docker", ["port", container, "5432/tcp"]);
-    const dbPort = mapped.trim().split(":").pop();
-    const databaseUrl = `postgres://e2e:${dbPassword}@127.0.0.1:${dbPort}/e2e`;
-    const pool = new pg.Pool({ connectionString: databaseUrl });
-    for (let attempt = 0; ; attempt += 1) {
-      try { await pool.query("SELECT 1"); break; } catch (error) {
-        if (attempt > 240) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-    // The init phase restarts the server once; wait for the final instance.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    await pool.query("SELECT 1");
-
-    execFileSync(process.execPath, ["dist/scripts/dbMigrate.js", "up"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "ignore" });
     const hash = await bcrypt.hash(PASSWORD, 4);
     await pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('1', 7, 0)");
     await pool.query(`INSERT INTO products (id, image, name, description, how_it_works, highlights, care_instructions, category,
                                             stock, rating_stars, rating_count, price_cents, keywords)
-                      VALUES ($1, 'images/products/socks.jpg', 'Socks', 'Soft.', 'Wear.', '{Cotton}', 'Wash.', 'Clothing', 0, 4.5, 87, 1090, '{socks}')`, [PRODUCT]);
+                      VALUES ($1, 'images/products/athletic-skateboard-shoes-gray.jpg', 'Socks', 'Soft.', 'Wear.', '{Cotton}', 'Wash.', 'Clothing', 0, 4.5, 87, 1090, '{socks}')`, [PRODUCT]);
     await pool.query("INSERT INTO users (id, name, email, password_hash) VALUES ($1, 'Alice', $2, $5), ($3, 'Bob', $4, $5)",
       [ALICE.id, ALICE.email, BOB.id, BOB.email, hash]);
-    console.log("Throwaway PostgreSQL ready (migrated 0001-0004, seeded).");
+    console.log("Throwaway PostgreSQL ready (all migrations applied, seeded).");
 
     const cert = path.join(temp, "cert.pem");
     const key = path.join(temp, "key.pem");
@@ -185,8 +74,7 @@ async function main() {
         env: {
           ...process.env, NODE_ENV: "development", PORT: String(expressPort), DATABASE_URL: databaseUrl,
           JWT_SECRET: randomBytes(32).toString("hex"),
-          DATA_SOURCE_DELIVERY_OPTIONS: "postgres", DATA_SOURCE_PRODUCTS: "postgres", DATA_SOURCE_USERS: "postgres",
-          DATA_SOURCE_CARTS: "postgres", DATA_SOURCE_ORDERS: "postgres",
+          ...ALL_POSTGRES,
           AUTH_COOKIE_SESSIONS: "true", AUTH_COOKIE_SECURE: String(secure), AUTH_ALLOWED_ORIGINS: origin,
         },
       });
@@ -220,7 +108,7 @@ async function main() {
 
         const home = await request(`${origin}/`, tls);
         const login = await request(`${origin}/login`, tls);
-        check("Next.js pages are served on the browser-facing origin", home.status === 200 && login.status === 200 && home.text.includes("Store preview"));
+        check("Next.js pages are served on the browser-facing origin", home.status === 200 && login.status === 200 && home.text.includes("Socks"));
 
         const viaProxy = await call(alice, "GET", "/api/products");
         const direct = await request(`http://127.0.0.1:${expressPort}/api/products`);
@@ -308,15 +196,14 @@ async function main() {
         await stop(express);
       }
     }
-    await pool.end();
   } finally {
     for (const child of children) await stop(child);
-    await run("docker", ["stop", container]).catch(() => undefined);
+    await database.stop();
     rmSync(temp, { recursive: true, force: true });
   }
 
-  console.log(`\n${passed}/${passed + failed} end-to-end checks passed`);
-  if (failed > 0) process.exitCode = 1;
+  console.log(`\n${result.passed}/${result.passed + result.failed} end-to-end checks passed`);
+  if (result.failed > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {

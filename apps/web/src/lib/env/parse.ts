@@ -54,6 +54,17 @@ export function parseClientIpForwarding(header: string | undefined, secret: stri
   return { header: name, secret: value };
 }
 
+/** The public site origin for absolute canonical/Open Graph URLs; undefined when unset or invalid. */
+export function parseSiteUrl(value: string | undefined): URL | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value.trim() ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseAppName(value: string | undefined): string {
   const name = value?.trim();
   return name && name.length <= 60 ? name : "Ecommerce";

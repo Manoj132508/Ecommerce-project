@@ -42,9 +42,35 @@ export async function fetchSession(): Promise<Session | null> {
 }
 
 export async function signIn(credentials: Credentials): Promise<Session> {
-  return parseSession(await apiFetch("/auth/session", { method: "POST", body: credentials, signIn: true }));
+  return parseSession(await apiFetch("/auth/session", { method: "POST", body: credentials, noSession: true }));
 }
 
 export async function signOut(csrfToken: string): Promise<void> {
   await apiFetch("/auth/session", { method: "DELETE", csrfToken });
+}
+
+/** Ends every session of this user (all browsers and devices). */
+export async function signOutEverywhere(csrfToken: string): Promise<void> {
+  await apiFetch("/auth/sessions", { method: "DELETE", csrfToken });
+}
+
+export interface AccountDetails {
+  name: string;
+  email: string;
+  password: string;
+}
+
+/**
+ * Creates an account (POST /api/auth/accounts). The API returns the new user
+ * only: no token and no session. The caller then sends the user to sign in.
+ */
+export async function createAccount(details: AccountDetails): Promise<SessionUser> {
+  const data = await apiFetch("/auth/accounts", { method: "POST", body: details, noSession: true });
+  if (isRecord(data)) {
+    const { user } = data;
+    if (isRecord(user) && typeof user._id === "string" && typeof user.name === "string" && typeof user.email === "string" && typeof user.isAdmin === "boolean") {
+      return { _id: user._id, name: user.name, email: user.email, isAdmin: user.isAdmin };
+    }
+  }
+  throw new ApiError(502, "Unexpected response from the API.");
 }

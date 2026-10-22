@@ -1,29 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, useSignOut } from "@/features/auth/hooks";
+
+const linkClass = "rounded px-3 py-2 font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white";
 
 export function SessionStatus() {
   const session = useSession();
   const signOut = useSignOut();
   const pathname = usePathname();
+  const router = useRouter();
 
-  if (session.isPending) return <span className="text-sm text-slate-300">…</span>;
+  if (session.isPending) return <span className="px-3 text-sm text-white/70">…</span>;
 
   if (!session.data) {
-    const from = pathname === "/login" ? "" : `?from=${encodeURIComponent(pathname)}`;
-    return <Link href={`/login${from}`} className="text-sm font-medium underline-offset-4 hover:underline">Sign in</Link>;
+    // Come back to this page after signing in (not to the sign-in pages themselves).
+    const from = pathname === "/login" || pathname === "/register" ? "" : `?from=${encodeURIComponent(pathname)}`;
+    return (
+      <div className="flex items-center gap-1">
+        <Link href={`/login${from}`} className={linkClass}>Sign in</Link>
+        <Link href={`/register${from}`} className={linkClass}>Register</Link>
+      </div>
+    );
   }
 
   return (
-    <div className="flex items-center gap-3 text-sm">
-      <span>Hello, {session.data.user.name}</span>
+    <div className="flex items-center gap-1 text-sm sm:text-base">
+      <Link href="/account" className={`${linkClass} max-w-40 truncate`}>{session.data.user.name}</Link>
       <button
         type="button"
-        onClick={() => signOut.mutate()}
+        onClick={() => signOut.mutate(undefined, { onSettled: () => router.refresh() })}
         disabled={signOut.isPending}
-        className="rounded-md border border-white/40 px-3 py-1 hover:bg-white/10 disabled:opacity-60"
+        className="rounded bg-red-600 px-3 py-2 font-semibold hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60"
       >
         Sign out
       </button>

@@ -16,8 +16,11 @@ export interface ApiRequest {
   body?: unknown;
   /** Required by the API for every method except GET. */
   csrfToken?: string;
-  /** Sign-in only: there is no session (and no CSRF token) yet; the API checks Origin instead. */
-  signIn?: boolean;
+  /**
+   * Sign-in and account creation only: there is no session (and so no CSRF
+   * token) yet; the API checks the Origin header and accepts JSON only.
+   */
+  noSession?: boolean;
 }
 
 /** Same-origin paths only: "/products" → "/api/products". */
@@ -32,10 +35,10 @@ export function apiPath(path: string): string {
  * Returns the parsed JSON (undefined for 204). The result is untrusted:
  * callers validate its shape (see the api.ts file of each feature).
  */
-export async function apiFetch(path: string, { method = "GET", body, csrfToken, signIn = false }: ApiRequest = {}, fetchImpl: typeof fetch = fetch): Promise<unknown> {
+export async function apiFetch(path: string, { method = "GET", body, csrfToken, noSession = false }: ApiRequest = {}, fetchImpl: typeof fetch = fetch): Promise<unknown> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (method !== "GET" && !signIn) {
+  if (method !== "GET" && !noSession) {
     if (!csrfToken) throw new ApiError(0, "Sign in again to continue.");
     headers["X-CSRF-Token"] = csrfToken;
   }
