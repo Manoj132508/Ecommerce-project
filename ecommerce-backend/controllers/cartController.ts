@@ -69,7 +69,8 @@ export function createCartController(
 
       return res.json(lines);
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Cart read failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to load the cart" } satisfies ErrorResponse);
     }
   };
 
@@ -100,7 +101,8 @@ export function createCartController(
       if (error instanceof CartQuantityError) {
         return res.status(400).json(quantityRange);
       }
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Add to cart failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to add the cart item" } satisfies ErrorResponse);
     }
   };
 
@@ -160,7 +162,8 @@ export function createCartController(
       if (error instanceof CartQuantityError) {
         return res.status(400).json(quantityRange);
       }
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Cart update failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to update the cart item" } satisfies ErrorResponse);
     }
   };
 
@@ -177,7 +180,8 @@ export function createCartController(
 
       return res.status(204).send();
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Cart removal failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to remove the cart item" } satisfies ErrorResponse);
     }
   };
 
@@ -224,7 +228,8 @@ export function createCartController(
 
       return res.json(summary);
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Payment summary failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to calculate the order total" } satisfies ErrorResponse);
     }
   };
 

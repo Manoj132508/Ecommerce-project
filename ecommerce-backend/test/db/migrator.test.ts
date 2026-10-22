@@ -37,10 +37,10 @@ const FUNCTIONS_0003 = [...FUNCTIONS_0002, "change_order_status", "reject_audit_
 const TABLES_0004 = [...TABLES_0003, "auth_sessions"].sort();
 const FUNCTIONS_0004 = [...FUNCTIONS_0003, "auth_sessions_guard"].sort();
 
-// After every migration (0001-0005).
+// After every migration (0001-0006).
 const SCHEMA_TABLES = [...TABLES_0004, "auth_rate_limits"].sort();
-const SCHEMA_FUNCTIONS = FUNCTIONS_0004;
-const ALL_VERSIONS = ["0001", "0002", "0003", "0004", "0005"];
+const SCHEMA_FUNCTIONS = [...FUNCTIONS_0004, "orders_checkout_key_immutable"].sort();
+const ALL_VERSIONS = ["0001", "0002", "0003", "0004", "0005", "0006"];
 
 let db: TestDatabase;
 
@@ -88,6 +88,7 @@ describe("fresh database", () => {
       }),
       expect.objectContaining({ version: "0004", name: "auth_sessions", checksum: await checksum("0004_auth_sessions.up.sql") }),
       expect.objectContaining({ version: "0005", name: "auth_rate_limits", checksum: await checksum("0005_auth_rate_limits.up.sql") }),
+      expect.objectContaining({ version: "0006", name: "checkout_idempotency", checksum: await checksum("0006_checkout_idempotency.up.sql") }),
     ]);
   });
 
@@ -113,6 +114,7 @@ describe("fresh database", () => {
       "auth_sessions_revoked_at_idx",
       "auth_rate_limits_pkey",
       "auth_rate_limits_expires_at_idx",
+      "orders_user_checkout_key_unique",
     ]));
 
     const foreignKeys = (await db.pool.query<{ conname: string; confdeltype: string }>(
@@ -167,7 +169,7 @@ describe("repeated and concurrent runs", () => {
       Array.from({ length: 4 }, () => migrate(db.pool, MIGRATIONS_DIRECTORY)),
     );
     expect(results.flatMap((result) => result.applied)).toEqual(ALL_VERSIONS);
-    expect(await history()).toHaveLength(5);
+    expect(await history()).toHaveLength(6);
   });
 
   test("status reports applied migrations", async () => {
@@ -177,6 +179,7 @@ describe("repeated and concurrent runs", () => {
       { version: "0003", name: "inventory_and_status_audit", state: "pending", appliedAt: null },
       { version: "0004", name: "auth_sessions", state: "pending", appliedAt: null },
       { version: "0005", name: "auth_rate_limits", state: "pending", appliedAt: null },
+      { version: "0006", name: "checkout_idempotency", state: "pending", appliedAt: null },
     ]);
     await migrate(db.pool, MIGRATIONS_DIRECTORY);
     expect(await migrationStatus(db.pool, MIGRATIONS_DIRECTORY)).toEqual([
@@ -185,6 +188,7 @@ describe("repeated and concurrent runs", () => {
       { version: "0003", name: "inventory_and_status_audit", state: "applied", appliedAt: expect.any(Date) },
       { version: "0004", name: "auth_sessions", state: "applied", appliedAt: expect.any(Date) },
       { version: "0005", name: "auth_rate_limits", state: "applied", appliedAt: expect.any(Date) },
+      { version: "0006", name: "checkout_idempotency", state: "applied", appliedAt: expect.any(Date) },
     ]);
   });
 });
@@ -232,11 +236,11 @@ describe("safety checks", () => {
   test("a failing migration is rolled back completely and not recorded", async () => {
     await migrate(db.pool, copy.directory);
     await writeFile(
-      path.join(copy.directory, "0006_broken.up.sql"),
+      path.join(copy.directory, "0007_broken.up.sql"),
       "CREATE TABLE half_done (id integer);\nALTER TABLE products ADD COLUMN half_done integer;\nSELECT 1 / 0;\n",
     );
 
-    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/0006_broken failed and was rolled back: division by zero/);
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/0007_broken failed and was rolled back: division by zero/);
 
     expect(await tables()).toEqual(SCHEMA_TABLES);
     const productColumns = await db.pool.query(
@@ -247,11 +251,11 @@ describe("safety checks", () => {
   });
 
   test("applies later migrations in order and rejects one numbered before an applied migration", async () => {
-    await writeFile(path.join(copy.directory, "0007_later.up.sql"), "CREATE TABLE later_table (id integer);\n");
-    expect((await migrate(db.pool, copy.directory)).applied).toEqual([...ALL_VERSIONS, "0007"]);
+    await writeFile(path.join(copy.directory, "0008_later.up.sql"), "CREATE TABLE later_table (id integer);\n");
+    expect((await migrate(db.pool, copy.directory)).applied).toEqual([...ALL_VERSIONS, "0008"]);
 
-    await writeFile(path.join(copy.directory, "0006_too_late.up.sql"), "CREATE TABLE too_late (id integer);\n");
-    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/older than applied 0007/);
+    await writeFile(path.join(copy.directory, "0007_too_late.up.sql"), "CREATE TABLE too_late (id integer);\n");
+    await expect(migrate(db.pool, copy.directory)).rejects.toThrow(/older than applied 0008/);
     expect(await tables()).not.toContain("too_late");
   });
 
@@ -269,6 +273,10 @@ describe("rollback", () => {
   test("reverts migrations one at a time, newest first, after which they re-apply cleanly", async () => {
     await migrate(db.pool, MIGRATIONS_DIRECTORY);
     await db.pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('1', 7, 0)");
+
+    expect(await rollbackLatest(db.pool, MIGRATIONS_DIRECTORY)).toBe("0006");
+    expect(await tables()).toEqual(SCHEMA_TABLES);
+    expect(await functions()).toEqual(FUNCTIONS_0004);
 
     expect(await rollbackLatest(db.pool, MIGRATIONS_DIRECTORY)).toBe("0005");
     expect(await tables()).toEqual(TABLES_0004);
@@ -307,9 +315,9 @@ describe("rollback", () => {
   test("refuses when the latest migration has no down file", async () => {
     const copy = await copyMigrations();
     try {
-      await writeFile(path.join(copy.directory, "0006_no_down.up.sql"), "CREATE TABLE kept (id integer);\n");
+      await writeFile(path.join(copy.directory, "0007_no_down.up.sql"), "CREATE TABLE kept (id integer);\n");
       await migrate(db.pool, copy.directory);
-      await expect(rollbackLatest(db.pool, copy.directory)).rejects.toThrow(/0006_no_down has no down file/);
+      await expect(rollbackLatest(db.pool, copy.directory)).rejects.toThrow(/0007_no_down has no down file/);
       expect(await tables()).toContain("kept");
     } finally {
       await copy.remove();
@@ -317,7 +325,7 @@ describe("rollback", () => {
   });
 });
 
-test("the real migrations directory holds 0001-0005, each with a down file", async () => {
+test("the real migrations directory holds 0001-0006, each with a down file", async () => {
   const migrations = await loadMigrations(MIGRATIONS_DIRECTORY);
   expect(migrations.map(({ version, name, downSql }) => ({ version, name, hasDown: downSql !== null }))).toEqual([
     { version: "0001", name: "initial_schema", hasDown: true },
@@ -325,5 +333,6 @@ test("the real migrations directory holds 0001-0005, each with a down file", asy
     { version: "0003", name: "inventory_and_status_audit", hasDown: true },
     { version: "0004", name: "auth_sessions", hasDown: true },
     { version: "0005", name: "auth_rate_limits", hasDown: true },
+    { version: "0006", name: "checkout_idempotency", hasDown: true },
   ]);
 });

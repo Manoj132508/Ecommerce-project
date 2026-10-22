@@ -536,15 +536,34 @@ export class PostgresOrderRepository implements OrderRepository {
     return order ?? null;
   }
 
-  async checkout(owner: CartOwner, user: AuthUser, customer: CustomerDetails): Promise<CheckoutResult> {
+  async checkout(owner: CartOwner, user: AuthUser, customer: CustomerDetails, idempotencyKey?: string): Promise<CheckoutResult> {
     const userId = requireOwner(owner);
     try {
       return await withTransaction(this.pool, async (client): Promise<CheckoutResult> => {
+        const existingOrder = async () => {
+          if (!idempotencyKey) return null;
+          const { rows } = await client.query<OrderRow>(
+            `SELECT ${ORDER_COLUMNS} FROM orders WHERE user_id = $1 AND checkout_key = $2`,
+            [userId, idempotencyKey],
+          );
+          const [order] = await this.withLines(client, rows, false);
+          return order ?? null;
+        };
+
+        // A retry can still recover its order even if the cart row was later
+        // removed administratively. This first lookup is only a fast path;
+        // the lookup after the cart lock is the concurrency guarantee.
+        const replay = await existingOrder();
+        if (replay) return { kind: "placed", order: replay };
+
         // Locks this user's cart: concurrent checkouts of the same cart run one at a time.
         const { rows: [cart] } = await client.query<{ id: string }>(
           "SELECT id::text AS id FROM carts WHERE user_id = $1 FOR UPDATE", [userId],
         );
         if (!cart) return { kind: "empty" };
+
+        const replayAfterLock = await existingOrder();
+        if (replayAfterLock) return { kind: "placed", order: replayAfterLock };
 
         const { rows: lines } = await client.query<CheckoutLineRow>(
           `SELECT ci.product_id::text AS product_id, ci.quantity, ci.delivery_option_id,
@@ -598,11 +617,12 @@ export class PostgresOrderRepository implements OrderRepository {
         const { rows: [order] } = await client.query<OrderRow>(
           `INSERT INTO orders (is_legacy, user_id, customer_full_name, customer_email, customer_phone, customer_address,
                                customer_city, customer_postal_code, customer_country, ordered_at, total_cost_cents,
-                               status, status_updated_at)
-           VALUES (false, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'placed', now())
+                               status, status_updated_at, checkout_key)
+           VALUES (false, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'placed', now(), $11)
            RETURNING ${ORDER_COLUMNS}`,
           [userId, customer.fullName, customer.email, customer.phone, customer.address, customer.city,
-            customer.postalCode, customer.country, new Date(now), Math.round(totalCostBeforeTaxCents * 1.1)],
+            customer.postalCode, customer.country, new Date(now), Math.round(totalCostBeforeTaxCents * 1.1),
+            idempotencyKey ?? null],
         );
         if (!order) throw new Error("INSERT returned no order");
 

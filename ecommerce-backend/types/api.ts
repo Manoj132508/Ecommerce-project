@@ -131,6 +131,8 @@ export interface OrderJSON {
   products: OrderProductJSON[];
   createdAt: string;
   updatedAt: string;
+  /** Null only for imported legacy orders. */
+  status?: "placed" | "processing" | "shipped" | "delivered" | "cancelled" | null;
 }
 
 export interface DeleteProductResponse {

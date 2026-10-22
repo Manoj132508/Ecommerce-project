@@ -1,6 +1,6 @@
 # PostgreSQL schema, migrations and data copy
 
-Status: **Phase 5B.** The schema (migrations 0001–0005), the MongoDB →
+Status: **Phase 5E.** The schema (migrations 0001–0006), the MongoDB →
 PostgreSQL copy-and-verify tooling and the PostgreSQL API repositories are
 built and tested. **MongoDB is still the default and active database for every
 domain**: an API domain uses PostgreSQL only when explicitly selected with its
@@ -166,6 +166,12 @@ products (referenced by id only)          data_import_runs (audit)
 
 - **Shared authentication rate limits (Phase 5C).** `auth_rate_limits` holds one fixed-window counter per key, the SHA-256 of the rule and the client address or email (neither is stored). One atomic `INSERT … ON CONFLICT` per attempt, on the database clock, so every API instance enforces the same limits.
 - **Operational data.** Never migrated or reconciled; ended windows are removed by `sessions:cleanup -- --confirm`. With MongoDB users, the same counters live in the `authRateLimits` collection (TTL index), which the MongoDB → PostgreSQL extraction ignores.
+
+### 0006_checkout_idempotency
+
+- **Retry-safe checkout.** `orders.checkout_key` stores an optional UUID supplied through `Idempotency-Key`. A partial unique index on `(user_id, checkout_key)` scopes a key to one customer.
+- **Concurrent requests.** The repository checks for an existing order before and after locking the customer's cart. Simultaneous requests with the same key and later retries all return the original order instead of creating duplicates or reporting an empty cart.
+- **History protection.** A trigger makes a recorded key immutable. Existing and imported orders keep `NULL`; no key is invented. The down migration removes only this column, trigger and index, so take a backup first as for every rollback.
 
 PostgreSQL is used by the API only for domains selected with `DATA_SOURCE_*`
 (see the backend README). The repositories in `repositories/postgres.ts` use

@@ -130,7 +130,7 @@ export interface OrderRepository {
   list(viewer: Viewer, expandProducts: boolean): Promise<unknown[]>;
   /** null when the order does not exist or the viewer may not see it. */
   get(orderId: string, viewer: Viewer, expandProducts: boolean): Promise<unknown>;
-  checkout(owner: CartOwner, user: AuthUser, customer: CustomerDetails): Promise<CheckoutResult>;
+  checkout(owner: CartOwner, user: AuthUser, customer: CustomerDetails, idempotencyKey?: string): Promise<CheckoutResult>;
   changeStatus(orderId: string, status: OrderStatus, actor: AuthUser, reason: string): Promise<StatusChangeResult>;
 }
 

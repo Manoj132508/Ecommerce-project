@@ -210,7 +210,7 @@ export class MongoOrderRepository implements OrderRepository {
     return expandProducts ? this.addProductDetails(order) : order;
   }
 
-  async checkout(_owner: CartOwner, user: AuthUser, customer: CustomerDetails): Promise<CheckoutResult> {
+  async checkout(_owner: CartOwner, user: AuthUser, customer: CustomerDetails, _idempotencyKey?: string): Promise<CheckoutResult> {
     const cartItems = await CartItem.find().sort({ createdAt: 1 });
 
     if (cartItems.length === 0) {

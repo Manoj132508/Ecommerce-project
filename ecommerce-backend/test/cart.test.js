@@ -264,10 +264,10 @@ describe("GET /api/payment-summary", () => {
     });
   });
 
-  test("a stored invalid delivery option is a 500 that leaks the internal message", async () => {
+  test("a stored invalid delivery option is a safe 500 without leaking internals", async () => {
     await insertCartItem({ productId: socks._id, deliveryOptionId: "9" });
     const response = await api().get("/api/payment-summary");
     expect(response.status).toBe(500);
-    expect(response.body).toEqual({ message: "Invalid delivery option: 9" });
+    expect(response.body).toEqual({ message: "Unable to calculate the order total" });
   });
 });

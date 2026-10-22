@@ -81,7 +81,11 @@ async function seed() {
 const addToCart = (userId: string, productId: unknown, quantity: unknown) => (
   app().post("/api/cart-items").set(auth(userId)).send({ productId, quantity })
 );
-const checkout = (userId: string) => app().post("/api/orders").set(auth(userId)).send({ customer: CUSTOMER });
+const checkout = (userId: string, idempotencyKey?: string) => {
+  const pending = app().post("/api/orders").set(auth(userId));
+  if (idempotencyKey) pending.set("Idempotency-Key", idempotencyKey);
+  return pending.send({ customer: CUSTOMER });
+};
 const count = async (table: string) => Number((await sql(`SELECT count(*) FROM ${table}`)).rows[0]?.count);
 
 // --------------------------------------------------------------- products
@@ -218,6 +222,14 @@ describe("per-user carts (D1, FD1, D3)", () => {
     expect((await app().delete(`/api/cart-items/${SOCKS}`).set(auth(ALICE_ID))).status).toBe(404);
   });
 
+  test("authenticated cart responses are private and never cacheable", async () => {
+    const response = await app().get("/api/cart-items").set(auth(ALICE_ID));
+    expect(response.headers["cache-control"]).toContain("private");
+    expect(response.headers["cache-control"]).toContain("no-store");
+    expect(response.headers.vary).toContain("Cookie");
+    expect(response.headers.vary).toContain("Authorization");
+  });
+
   test("FD1: quantities must be integers from 1 to 10, including after merging", async () => {
     for (const quantity of [0, 11, 1.5, "2", null, -1]) {
       const response = await addToCart(ALICE_ID, SOCKS, quantity);
@@ -351,6 +363,26 @@ describe("checkout (transactional)", () => {
     expect(await count("orders WHERE NOT is_legacy")).toBe(1);
   });
 
+  test("one idempotency key safely replays simultaneous and later checkout attempts", async () => {
+    const key = "11111111-1111-4111-8111-111111111111";
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const responses = await Promise.all([checkout(ALICE_ID, key), checkout(ALICE_ID, key), checkout(ALICE_ID, key)]);
+    expect(responses.every((response) => response.status === 201)).toBe(true);
+    expect(new Set(responses.map((response) => response.body.id)).size).toBe(1);
+    expect(await count("orders WHERE NOT is_legacy")).toBe(1);
+    expect((await checkout(ALICE_ID, key)).body.id).toBe(responses[0]?.body.id);
+    expect((await checkout(BOB_ID, key)).body).toEqual({ message: "Cart is empty" });
+  });
+
+  test("rejects a malformed Idempotency-Key before changing the cart", async () => {
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const response = await checkout(ALICE_ID, "not-a-uuid");
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: "Invalid Idempotency-Key" });
+    expect(await count("orders WHERE NOT is_legacy")).toBe(0);
+    expect((await app().get("/api/cart-items").set(auth(ALICE_ID))).body).toHaveLength(1);
+  });
+
   test("stock is enforced only for tracked inventory, and never goes negative under concurrency", async () => {
     await sql("UPDATE products SET inventory_tracked = true, stock = 1 WHERE id = $1", [BALL]);
     await addToCart(ALICE_ID, BALL, 1);
@@ -389,6 +421,11 @@ describe("checkout (transactional)", () => {
 });
 
 describe("order history and ownership", () => {
+  test("authenticated order responses are private and never cacheable", async () => {
+    const response = await app().get("/api/orders").set(auth(ALICE_ID));
+    expect(response.headers["cache-control"]).toContain("private");
+    expect(response.headers["cache-control"]).toContain("no-store");
+  });
   test("users see their own orders; admins see all, including legacy history", async () => {
     await addToCart(ALICE_ID, SOCKS, 1);
     const { body: aliceOrder } = await checkout(ALICE_ID);

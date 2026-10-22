@@ -30,7 +30,8 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
       const user = requireUser(req);
       return res.json(await orders.list({ id: user.id, isAdmin: user.isAdmin }, req.query.expand === "products"));
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Order list failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to load orders" } satisfies ErrorResponse);
     }
   };
 
@@ -51,7 +52,8 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
 
       return res.json(order);
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Order lookup failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to load the order" } satisfies ErrorResponse);
     }
   };
 
@@ -60,6 +62,11 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
     try {
       const user = requireUser(req);
       const customer = req.body?.customer;
+      const idempotencyKey = req.get("Idempotency-Key");
+
+      if (idempotencyKey !== undefined && !isOrderId(idempotencyKey)) {
+        return res.status(400).json({ message: "Invalid Idempotency-Key" } satisfies ErrorResponse);
+      }
 
       if (
         !customer ||
@@ -82,7 +89,7 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
         city: customer.city.trim(),
         postalCode: customer.postalCode.trim(),
         country: customer.country.trim()
-      });
+      }, idempotencyKey);
 
       switch (result.kind) {
         case "empty":
@@ -103,7 +110,8 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
           return res.status(201).json(result.order);
       }
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Checkout failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to place the order" } satisfies ErrorResponse);
     }
   };
 
