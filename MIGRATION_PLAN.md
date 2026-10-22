@@ -727,14 +727,15 @@ In those cases recovery is forward-fix on PostgreSQL:
 
 | Package | Version | Note |
 | --- | --- | --- |
-| `next` | 16.4.0 | App Router, Turbopack build; newest release older than 14 days; `npm audit` 0 |
+| `next` | 16.4.2 | App Router, Turbopack build; was 16.4.0, upgraded in 5F for critical advisories (see 5F); `npm audit` 0 |
 | `react`, `react-dom` | 19.3.0 | |
 | `@tanstack/react-query` | 5.104.1 | server state |
 | `@reduxjs/toolkit`, `react-redux` | 2.13.0, 9.3.0 | UI state only |
 | `tailwindcss`, `@tailwindcss/postcss` | 4.3.3 | |
 | `typescript` | 6.0.3 | strict, `noUncheckedIndexedAccess` (same major as the backend) |
-| `eslint` + `eslint-config-next` | 9.39.5, 16.4.0 | official Next.js rules (core web vitals + TypeScript); its `fast-glob` is replaced by `tools/fast-glob-shim` (R35, resolved in 5C) |
+| `eslint` + `eslint-config-next` | 9.39.5, 16.4.2 | official Next.js rules (core web vitals + TypeScript); its `fast-glob` is replaced by `tools/fast-glob-shim` (R35, resolved in 5C) |
 | `vitest`, `tough-cookie`, `server-only` | 5.0.5, 6.0.2, 0.0.1 | tests; browser-like cookie jar for the end-to-end check; build-time guard for server-only modules |
+| `@playwright/test`, `playwright-core`, `@axe-core/playwright` | 1.64.0, 1.64.0, 4.13.0 | real-browser suite (5F); `playwright-core` pinned so axe uses the same copy |
 
 ```
 apps/web/
@@ -991,11 +992,85 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 - Proxy e2e remains **52/52**; legacy Vite remains **47/47** plus typecheck, lint and build. Backend MongoDB unit suite remains **211 passed, 9 todo**. Typechecks, lints, builds and package audits are clean.
 - A real-browser visual pass is still pending. Windows browser control stopped before inspection because it could not establish the current Edge URL with enough confidence. Component keyboard tests and real-server HTTP e2e passed, but they are not a substitute for desktop/mobile visual and screen-reader checks.
 
+#### 5F — Parity verification, checkout idempotency and real-browser testing (2026-10-22, local, not pushed)
+
+5E (`e816bd7`, `b7a32a4`, `902dea7`) was reviewed, secret-scanned (no credentials, customer data, dumps, logs or generated output), verified with the full baseline and **pushed without force** (`aad3125..902dea7`). `main`, `migration/postgres` and `backup/wip-ts-postgres-2026-10-21` were not touched.
+
+**Feature-parity matrix (Vite → Next.js)**
+
+| Area | Vite | Next.js | Status |
+| --- | --- | --- | --- |
+| Home / catalogue grid | `/`, client fetch, all products | `/` and `/products`, server-rendered, 60 s cache | Complete |
+| Search | live filter from Redux, name/description/category/keywords | `?q=` (same matching), shareable, no-JS, box shows the current query (fixed in 5F), back/forward restore it | Intentionally changed (URL-based) |
+| Category filter | — | `?category=` chips | New |
+| Product details | `/products/:id`, 200 "Product not found" | `/products/[id]`, metadata, JSON-LD, real 404 | Complete (404 intentionally changed) |
+| Images | `public/images` | 35 product + 11 rating images, `next/image`; all decode in Chromium, Firefox, WebKit (browser suite) | Complete |
+| Login / registration | bearer JWT, `location.state` return path | cookie session, `?from=` validated; register then sign in | Intentionally changed |
+| Return path after sign-in | path + search | path + search (header links and session expiry now keep the query; fixed in 5F); foreign/sign-in paths ignored | Complete |
+| Header | name, cart count, orders, admin, logout; mobile menu | account, cart count, preview drawer, checkout, orders, sign out; mobile menu closes on Escape/navigation (5F) | Partial — no admin link (admin not migrated) |
+| Cart / checkout review | `/checkout` (quantities, delivery, summary) | `/cart` + drawer | Complete |
+| Customer details + place order | `/order-confirmation` | `/checkout` two-step review, idempotent; `/order-confirmation` → 307 `/checkout` | Intentionally changed |
+| Unavailable (deleted) products | blocks confirmation; `/product-unavailable` after Buy again | stays visible, blocks checkout; Buy again explains inline; `/product-unavailable` → 307 `/orders` | Intentionally changed |
+| Orders list | all lines, Buy again, Track package | same, plus View order; Buy again and Track package **added in 5F** | Complete |
+| Order details | — | `/orders/[id]`, owner only, snapshots, status | New |
+| Tracking | `/tracking?orderId&productId`, time-based stages | same URL, owner-checked server page, real 404, Vite stage rules + recorded status (cancelled/shipped/delivered) — **added in 5F** | Complete |
+| Historical orders | product or "no longer available" | stored snapshot name/price; legacy lines "Product information unavailable" (browser-tested) | Complete |
+| Session expiry / 401 | notice + login with return path | same, from client 401s and server guards | Complete |
+| Cross-tab sign-in/out | `storage` event | `BroadcastChannel` (one channel per tab, no user data in the message) — **added in 5F** | Complete |
+| Unknown URL | renders home | 404 page | Intentionally changed (approved) |
+| Admin (products CRUD, all orders) | `/admin` | not migrated; still served by Vite; API keeps `adminOnly` | **Missing (planned stage)** |
+| Admin viewing `/orders` | admin tab | `/orders` lists every order for an admin account (API behaviour) under "Your orders" | Partial — label to fix with the admin stage |
+| Desktop width | grid fills up to 8 columns | content capped at 1024 px (`max-w-5xl`), 5 columns | Partial — visual, left to Phase 6 (spec §2.3) |
+| Dates | browser time zone | fixed store zone `Europe/London` on server and client (hydration-safe) | Intentionally changed |
+
+**Parity and quality fixes in 5F (Next.js)**
+- Header search shows the active query; sign-in/register links and the session-expiry redirect keep the full path and query.
+- Orders: Buy again (deleted product → inline message), Track package; `/tracking` page; legacy route redirects (307 while Vite is live).
+- Cross-tab identity changes clear user data, re-check the session and re-run server guards.
+- Cart drawer: focus moves in, Tab is trapped, Escape closes, page scroll locked, focus returns to the opener (Safari included: the opener focuses itself on click). Backdrop is no longer a second unlabeled tab stop.
+- **Bugs found by the real browsers:** (1) WebKit hydration errors — data detectors rewrote numbers/dates (`formatDetection` meta added) and the header's Suspense boundary could hydrate after the session had loaded (`useHydrated`); (2) a cart/order action clicked before the session check finished was treated as an expired session (`requireCsrfToken` now waits for the check); (3) a cart change during the first payment-summary load left the old summary in place, blocking checkout (`refetchAfterWrite` cancels in-flight reads before invalidating); (4) mobile order/cart images stretched to full width (thumbnails capped).
+- `robots.txt` (private pages and `/api/` disallowed) and `sitemap.xml` (catalogue; absolute URLs only when `NEXT_PUBLIC_SITE_URL` is set at build time).
+- **Security update:** `next` and `eslint-config-next` 16.4.0 → **16.4.2** (critical GHSA-2464-fhr4-w9xw image-optimiser RCE with SVG; GHSA-p3m5-59mp-jv5r Server Actions DoS; Next 16.4.0 refused to build). 16.4.2 is 7 days old — an exception to the 14-day rule for a critical fix. The app serves no SVG through the optimiser (`localPatterns` `/images/**`, no remote hosts).
+
+**Checkout idempotency (Part C)**
+- Scope: `orders.checkout_key` is unique per `(user_id, key)` and used only by `POST /api/orders` (operation scope). Another user's identical key is independent.
+- Same key + same details (after the server's normalisation: trim, lower-case email) → the original order (201), including simultaneous requests (serialised by the cart row lock, re-checked after the lock) and late retries after the cart was refilled (the new cart is left alone).
+- **Same key + different details → `422`**, nothing written (new in 5F; no migration: the stored customer columns are the request body).
+- Interrupted before commit: everything (order, lines, status event, cart clear, key) is one transaction; a failure stores nothing, the cart is intact and the same key succeeds on retry (tested with an injected failure).
+- Errors (`empty`, `unavailable`, `invalid-delivery`, `insufficient-stock`, 500) never store a key, so they are never replayed as successes.
+- Client: one key per reviewed set of details; retries reuse it, edited details get a new one (safe because a completed attempt already emptied the cart); after a failed attempt and an emptied cart the page points to Orders. Each new checkout visit starts a new key.
+- Retention: keys live as long as their order (immutable column, no expiry, no cleanup job). Storage cost is one UUID per order; a time-limited window can be added later by a `checkout_key_expires_at` policy if needed. MongoDB orders ignore the header (legacy path).
+
+**Real-browser testing (Part D)** — `npm run test:browser` (Playwright 1.64.0, `@axe-core/playwright` 4.13.0)
+- Isolated browsers launched by Playwright against a throwaway stack (`browser/stack.mjs`: PostgreSQL container, compiled Express, `next start`); no existing browser window or development database is touched. Browsers set to `America/Los_Angeles` on purpose to catch date-hydration mismatches.
+- Projects: Chromium 1366×900, Chromium tablet 820×1180 (touch), Pixel 7, Firefox 1366×900, WebKit 1366×900, iPhone 14.
+- Covered: images decode, no console/hydration errors, search/filters/back, product + 404s, legacy redirects, registration validation and labels, safe return paths, sign-out and guards, keyboard order and focus rings, cart drawer focus handling, full checkout with native validation, order confirmation, Buy again, tracking, deleted products blocking checkout, idle-expired session, cross-account privacy in one browser, cross-tab sign-out, historical/legacy orders, no horizontal scroll, axe (WCAG 2.0/2.1 A/AA), CLS (Chromium).
+- Result: **92 passed, 0 failed, 0 flaky, 10 skipped** (skips are deliberate: axe on one engine per layout family, Layout Instability API Chromium-only, WebKit does not Tab to links by default, cross-tab on desktop only).
+- axe: **0 violations of any impact** on 12 pages × 4 engine/layouts. Measured home-page CLS ≤ 0.0007; 172.7 KiB encoded script (local `next start`, no throttling — not a field benchmark).
+- Screenshots (12 per project) in `apps/web/test-results/screenshots/<project>/` (ignored by git).
+- Firefox: during development, Playwright's Firefox intermittently stopped issuing requests after an action and once failed closing a context (Juggler protocol error); not seen in Chromium/WebKit and not reproduced by a timer-throttling experiment. The project has `retries: 1` so any recurrence is reported as *flaky*; the final run had none. Root cause not established — include Firefox in the manual pass.
+- Automated checks do **not** replace a screen-reader test. Manual checklist (still to do): NVDA + Firefox and VoiceOver + iOS Safari on sign-in, add to cart, cart drawer, checkout errors, order confirmation and tracking; 200 % zoom; Windows high contrast.
+
+**Performance and security review (Part E)**
+- Server/client boundaries: catalogue, product, tracking and guards are Server Components; 17 client components are interactive islands (forms, header session area, cart, checkout, orders). Duplicate fetching: none found beyond the deliberate server guard + client query on private pages (the guard only checks the session).
+- Caching: authenticated HTML answers `private, no-cache, no-store` (Next dynamic rendering; checked for `/account`, `/cart`, `/checkout`, `/orders`, `/orders/[id]`, `/tracking`), and private API responses `private, no-store` with `Vary: Cookie, Authorization` (pages e2e).
+- Cookies, CSRF, Origin checks, redirect validation and the proxy allow-lists are unchanged from 5B–5E and still covered by the 52-check proxy e2e. No session token or private data in URLs, storage, Redux, logs or the BroadcastChannel message.
+- Query cache: cleared on sign-in, sign-out, 401 and cross-tab identity changes.
+- Remaining items: field validation errors are not yet linked per field (`aria-describedby`) on sign-in/registration; header shows the full nav only from 1280 px; copy uses internal terms ("Stored total", "Authoritative total") — all scheduled in the Phase 6 spec.
+
+**Tests and verification for 5F (final run, 2026-10-22)**
+- Backend MongoDB suite **211 passed, 9 todo**; PostgreSQL suite **260/260** (+5: key reuse 422, normalised replay, late retry with refilled cart, fresh key, interrupted transaction); mutation check: removing the payload comparison fails the 422 test.
+- Next.js unit/component **168/168** (+20); mutation checks for the hydration guard and the in-flight refetch fix. Proxy e2e **52/52**; pages e2e **60/60** (+14: tracking ownership, private-page caching, legacy redirects, robots, sitemap, key reuse 422); browser suite as above.
+- Vite **47/47**, typecheck, lint, build. Typecheck, lint, builds and `npm audit` (0) clean in all three packages.
+
+**Phase 6 proposal:** [`docs/PHASE6_REDESIGN_SPEC.md`](docs/PHASE6_REDESIGN_SPEC.md) — tokens, type scale, components, duplication to remove, page-by-page tasks, accessibility and responsive acceptance criteria. Not implemented.
+
 #### Remaining Phase 5 work (awaiting approval)
 
-- [ ] Review the local 5E commits; do not push until explicitly approved.
-- [ ] Manual browser pass: desktop and mobile widths, keyboard-only navigation, screen-reader spot check.
-- [ ] Next stage: dedicated tracking/order-confirmation experiences, then admin; cross-tab sign-out (`BroadcastChannel`).
+- [x] Review and push the 5E commits (done in 5F, without force).
+- [ ] Review the local 5F commits; push only after approval.
+- [ ] Manual pass: screen readers (NVDA + Firefox, VoiceOver + iOS Safari), 200 % zoom, high contrast; Firefox flow check (see 5F).
+- [ ] Next stage: admin migration (products CRUD, order list/status), then retire the Vite-only redirects.
 - [ ] Before any deployment: the Render settings `TRUST_PROXY_HOPS` and `PROXY_CLIENT_IP_SECRET`, and on Vercel `BACKEND_ORIGIN`, `TRUSTED_CLIENT_IP_HEADER`, `PROXY_CLIENT_IP_SECRET` and `NEXT_PUBLIC_SITE_URL` (documented, not applied); then a preview deployment as a **new** Vercel project.
 
 **Acceptance (5C/5D/5E):** met locally except for the explicitly manual visual/browser pass.
@@ -1101,10 +1176,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/phase5/nextjs-foundation` is at `aad3125` (5C/5D were reviewed and pushed without force). Phase 5E is **local only**. Nothing is merged or deployed.
+`origin/phase5/nextjs-foundation` is at `902dea7` (5E reviewed and pushed without force). Phase 5F is **local only**. Nothing is merged or deployed.
 
-1. Owner: review the local 5E commits; push only after explicit approval.
-2. Manual browser pass (R41): desktop and mobile widths, keyboard-only, screen-reader spot check on `npm run dev` (`apps/web`).
-3. Next stage, with approval: dedicated tracking/order-confirmation experiences, then admin.
+1. Owner: review the local 5F commits; push only after explicit approval.
+2. Manual pass (R41): automated browser checks now pass in Chromium, Firefox and WebKit at six viewports (5F); screen-reader, zoom and high-contrast checks remain manual.
+3. Next stage, with approval: admin migration; then Phase 6 per `docs/PHASE6_REDESIGN_SPEC.md`.
 4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
 5. Still open: the R31 production-readiness items and the production prerequisites in §6 Phase 4.
