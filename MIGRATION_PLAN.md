@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–4 (local) pushed on `migration/postgres`. Branch `phase5/nextjs-foundation` pushed up to `b3e3d08` (5A Next.js foundation, 5B cookie sessions). Committed locally after that, not pushed: 5C security hardening (CORS 403, shared authentication rate limits, Next.js lint rules) and 5D the first migrated pages (home, products, product details, sign-in, registration, account) with product images. Cookie sessions stay disabled by default and refused in production. The Vite app is unchanged and remains the live storefront; MongoDB is still the production default. Nothing was deployed and no production setting or data was touched.**
+Status: **Phases 0–4 (local) are pushed on `migration/postgres`. Branch `phase5/nextjs-foundation` is pushed through `aad3125` (5A–5D). Phase 5E—customer cart, checkout and order history—is implemented and tested in local-only commits. Cookie sessions stay disabled by default and refused in production. The Vite app is unchanged and remains the live storefront; MongoDB is still the production default. Nothing was deployed and no production setting or production data was touched.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -906,7 +906,8 @@ The local development database does **not** have 0004 or 0005 applied yet. With 
 | `/register` | **migrated** | Client form | `POST /api/auth/accounts`, then the normal sign-in (below) |
 | `/account` | **new** | Server layout guard + Server Component | Session checked server-side per request (redirect 307 to `/login?from=%2Faccount`); profile; sign out; sign out on all devices |
 | unknown URLs | **404** | `not-found.tsx` | Approved behaviour change |
-| `/checkout`, `/orders`, `/tracking`, `/order-confirmation`, `/product-unavailable`, `/admin` | next stage | — | Still served by the Vite app |
+| `/checkout`, `/orders` | **migrated in 5E** | Server guard + Client Component | Cookie session, CSRF and per-user query keys |
+| `/tracking`, `/order-confirmation`, `/product-unavailable`, `/admin` | next stage | — | Still served by the Vite app |
 
 - **Architecture:**
   - Public catalogue pages are Server Components (SEO, no client fetch for first paint). Product data is read server-to-server from Express (`lib/server/catalog.ts`, React `cache` + `fetch` revalidate 60 s) and validated (`features/catalog/product.ts`).
@@ -952,16 +953,54 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 - *Proxy end to end:* `npm run test:e2e`, 52/52, now on the shared helpers in `scripts/e2e-support.mjs`.
 - **Browser automation is not available in this environment.** Visual, responsive and real-browser checks, including keyboard use in a browser, are **pending a manual pass**. The component tests cover labels, roles, focus order and Enter activation; the e2e runs cover HTTP behaviour.
 
+#### 5E — Customer cart, checkout and order history (local, not pushed)
+
+| Route/surface | Rendering and ownership | Behaviour |
+| --- | --- | --- |
+| Header + cart drawer | Client Components backed by the cookie session and user-scoped TanStack Query keys | Responsive account/cart/order navigation; backend-derived item count and totals; signed-out users never receive another user's cached data |
+| `/cart` | Server session guard + Client Component | Quantity 1–10, remove item, choose delivery option, authoritative totals, and unavailable products remain visible and block checkout until removed |
+| `/checkout` | Server session guard + Client Component; Redux stores only the details/review presentation step | Validated customer details, review step, authoritative cart summary, double-submit protection, and an explicit statement that no payment provider is integrated and no charge is made |
+| `/orders` | Server guard + Client Component | Signed-in customer's orders only, newest first, with status and totals |
+| `/orders/[id]` | Server Component ownership check + hydrated Client Component | Malformed, unknown and another user's ids return a real 404; stored product snapshots and prices are used, never current catalogue prices for new orders |
+
+**Architecture and security**
+- Cart and order data stays in TanStack Query, keyed by user id. Redux contains only ephemeral UI state (drawer/menu, notice and checkout step). Sign-in, sign-out and a client-side 401 clear user-scoped data before a safe login redirect.
+- Every cart and order response is private and non-cacheable (`Cache-Control: private, no-store, max-age=0`, `Pragma: no-cache`, `Vary: Cookie, Authorization`). The Next proxy forwards that cache policy.
+- Checkout still requires the cookie session and CSRF token. It additionally sends a UUID `Idempotency-Key`. Migration `0006_checkout_idempotency` adds a nullable, immutable per-user checkout key; PostgreSQL checks it before and after locking the user's cart, so simultaneous requests and later retries return one order. Existing orders are unchanged. MongoDB compatibility is preserved and ignores the optional key.
+- Controller errors log their internal cause on the server and return a generic 500 to the browser. Backend authorization remains authoritative; client route guards are navigation assistance, not access control.
+
+**Compatibility and changed-file inventory**
+
+| Area | Kept / changed / rejected |
+| --- | --- |
+| Legacy Vite app | **Kept unchanged.** Its bearer-token requests and API bodies remain compatible. No route, dependency or asset was changed. |
+| Express API | Cart/order cache middleware, safe errors, optional checkout idempotency header, repository support and migration 0006. Existing response fields remain; order JSON now exposes the already-stored `status`. |
+| Next.js app | New cart, checkout and order route/features; navigation, session-expiry handling, per-user query keys, proxy/header support, component tests and real-server e2e coverage. |
+| `apps/web/AGENTS.md` | **Kept and tracked.** Next.js generated it to route repository work to the installed, version-matched framework documentation; it contains no secret or machine-specific path. |
+| Generated output and local logs | **Rejected.** `.next`, `dist`, `.codex-run`, database dumps and environment files remain ignored/outside git. |
+
+**Database execution and recovery (local only, 2026-10-22)**
+- The pre-existing MongoDB archive was restored into an isolated container: 51/51 documents and the live per-collection `dbHash` matched.
+- Before migrations 0004–0005: `pg-ecommerce-before-auth-migrations-20261022-154407.dump`, SHA-256 `B9AA55F5E4174CADEF4E8CE4004F1575858DA1DC1B91BFB51256526541BCBEF2`; restored with `--no-owner` into a scratch database and row counts matched.
+- Before migration 0006: `pg-ecommerce-before-0006-20261022-155754.dump`, SHA-256 `3F4262A22DE452A5FEC1B3036DF9B59E2ACD6AB103EF1DD9165E0511AFC5FB3E`; scratch restore counts matched. All six migrations are applied locally and a repeat migration run is a no-op. No production database was contacted.
+
+**Tests and verification for 5E**
+- PostgreSQL suite: **255/255**, including malformed keys, three simultaneous same-key requests, later retry, per-user key scope, private-cache headers and migrations 0001–0006.
+- Next.js unit/component suite: **148/148**, including deleted products, quantity limits, CSRF, checkout review/idempotency/no-payment wording, snapshot prices, session expiry, keyboard focus and proxy header forwarding.
+- Pages e2e: **46/46** against real compiled Express + `next start` + throwaway PostgreSQL: two-user isolation, direct guarded routes, cart checkout, three simultaneous retries producing one order, ownership 404s, stored snapshots and private-cache headers.
+- Proxy e2e remains **52/52**; legacy Vite remains **47/47** plus typecheck, lint and build. Backend MongoDB unit suite remains **211 passed, 9 todo**. Typechecks, lints, builds and package audits are clean.
+- A real-browser visual pass is still pending. Windows browser control stopped before inspection because it could not establish the current Edge URL with enough confidence. Component keyboard tests and real-server HTTP e2e passed, but they are not a substitute for desktop/mobile visual and screen-reader checks.
+
 #### Remaining Phase 5 work (awaiting approval)
 
-- [ ] Approval to push `phase5/nextjs-foundation` (commits after `b3e3d08` are local).
+- [ ] Review the local 5E commits; do not push until explicitly approved.
 - [ ] Manual browser pass: desktop and mobile widths, keyboard-only navigation, screen-reader spot check.
-- [ ] Next stage: cart, checkout, order confirmation, orders and tracking pages (cookie session + CSRF); then admin; the session-expiry watcher for client-side 401s on those pages; cross-tab sign-out (`BroadcastChannel`).
+- [ ] Next stage: dedicated tracking/order-confirmation experiences, then admin; cross-tab sign-out (`BroadcastChannel`).
 - [ ] Before any deployment: the Render settings `TRUST_PROXY_HOPS` and `PROXY_CLIENT_IP_SECRET`, and on Vercel `BACKEND_ORIGIN`, `TRUSTED_CLIENT_IP_HEADER`, `PROXY_CLIENT_IP_SECRET` and `NEXT_PUBLIC_SITE_URL` (documented, not applied); then a preview deployment as a **new** Vercel project.
 
-**Acceptance (5C/5D):** met locally.
-- Backend: MongoDB suite 211 + 9 todo, PostgreSQL suite 251.
-- Next.js: 143 unit and component tests, 35 pages e2e and 52 proxy e2e checks.
+**Acceptance (5C/5D/5E):** met locally except for the explicitly manual visual/browser pass.
+- Backend: MongoDB suite 211 + 9 todo, PostgreSQL suite 255.
+- Next.js: 148 unit and component tests, 46 pages e2e and 52 proxy e2e checks.
 - Vite: 47 tests, plus the read-only smoke run.
 - Typecheck, lint, builds, and `npm audit` 0 in every package.
 
@@ -1062,10 +1101,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/phase5/nextjs-foundation` is at `b3e3d08`. The 5C security commit (`1be8a1c`) and the 5D pages commits are **local only**, awaiting approval to push. Nothing is merged or deployed.
+`origin/phase5/nextjs-foundation` is at `aad3125` (5C/5D were reviewed and pushed without force). Phase 5E is **local only**. Nothing is merged or deployed.
 
-1. Owner: review the 5C and 5D commits and approve pushing them.
+1. Owner: review the local 5E commits; push only after explicit approval.
 2. Manual browser pass (R41): desktop and mobile widths, keyboard-only, screen-reader spot check on `npm run dev` (`apps/web`).
-3. Next stage, with approval: cart, checkout, orders and tracking pages on the cookie session, then admin.
+3. Next stage, with approval: dedicated tracking/order-confirmation experiences, then admin.
 4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
 5. Still open: the R31 production-readiness items and the production prerequisites in §6 Phase 4.
