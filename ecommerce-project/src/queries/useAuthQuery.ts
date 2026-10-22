@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import api, { getErrorStatus, getStoredToken, setStoredToken } from '../services/api';
 import type {
   AuthResponse,
@@ -7,8 +7,14 @@ import type {
   LoginCredentials,
   RegisterDetails,
 } from '../types/auth';
+import {
+  authQueryKey,
+  isUserScopedKey,
+  loginMutationKey,
+  registerMutationKey,
+} from './queryKeys';
 
-export const authQueryKey = ['auth', 'profile'] as const;
+export { authQueryKey };
 
 async function fetchUserProfile(): Promise<AuthUser> {
   try {
@@ -37,10 +43,16 @@ async function authenticate(
   return user;
 }
 
-function clearUserScopedQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.removeQueries({
-    predicate: (query) => ['cart', 'checkout', 'orders'].includes(String(query.queryKey[0])),
-  });
+/** Removes every user's cart, checkout and order data from the cache. */
+export function clearUserScopedQueries(queryClient: QueryClient) {
+  queryClient.removeQueries({ predicate: (query) => isUserScopedKey(query.queryKey) });
+}
+
+/** Ends the session locally: forgets the token, the user and their cached data. */
+export function endSession(queryClient: QueryClient) {
+  setStoredToken(null);
+  queryClient.setQueryData(authQueryKey, null);
+  clearUserScopedQueries(queryClient);
 }
 
 export function useAuthQuery() {
@@ -55,10 +67,21 @@ export function useAuthQuery() {
   });
 }
 
+/**
+ * The signed-in user's id (null when signed out) and whether it is known yet.
+ * User-specific queries wait until it is known, so data fetched with a token
+ * can never be cached under the wrong identity.
+ */
+export function useUserScope() {
+  const { data, isPending } = useAuthQuery();
+  return { userId: data?._id ?? null, identityKnown: !isPending };
+}
+
 export function useLoginMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
+    mutationKey: loginMutationKey,
     mutationFn: (credentials: LoginCredentials) => authenticate('/auth/login', credentials),
     onSuccess: (user) => {
       clearUserScopedQueries(queryClient);
@@ -71,6 +94,7 @@ export function useRegisterMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
+    mutationKey: registerMutationKey,
     mutationFn: (details: RegisterDetails) => authenticate('/auth/register', details),
     onSuccess: (user) => {
       clearUserScopedQueries(queryClient);
@@ -83,8 +107,6 @@ export function useLogout() {
   const queryClient = useQueryClient();
 
   return useCallback(() => {
-    setStoredToken(null);
-    queryClient.setQueryData(authQueryKey, null);
-    clearUserScopedQueries(queryClient);
+    endSession(queryClient);
   }, [queryClient]);
 }

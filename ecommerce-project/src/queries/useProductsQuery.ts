@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import type { ProductData } from '../types/product';
 
-export const productsQueryKey = ['products'] as const;
+import { productsQueryKey } from './queryKeys';
+
+export { productsQueryKey };
 
 async function fetchProducts(): Promise<ProductData[]> {
   const { data } = await api.get('/products');

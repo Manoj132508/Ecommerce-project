@@ -1,10 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import type { CustomerData, OrderData } from '../types/order';
-import { cartQueryKey, checkoutQueryKey } from './useCartQueries';
-
-export const ordersQueryKey = ['orders'] as const;
-export const orderQueryKey = (orderId: string) => ['orders', orderId] as const;
+import { cartRootKey, checkoutRootKey, orderQueryKey, ordersQueryKey, ordersRootKey } from './queryKeys';
+import { useUserScope } from './useAuthQuery';
 
 async function fetchOrders(): Promise<OrderData[]> {
   const { data } = await api.get<OrderData[]>('/orders?expand=products');
@@ -19,36 +17,48 @@ async function fetchOrder(orderId: string): Promise<OrderData> {
 }
 
 export function useOrdersQuery(enabled = true) {
+  const { userId, identityKnown } = useUserScope();
+
   return useQuery({
-    queryKey: ordersQueryKey,
+    queryKey: ordersQueryKey(userId),
     queryFn: fetchOrders,
-    enabled,
+    enabled: enabled && identityKnown,
   });
 }
 
 export function useOrderQuery(orderId: string | null) {
+  const { userId, identityKnown } = useUserScope();
+
   return useQuery({
-    queryKey: orderQueryKey(orderId ?? ''),
+    queryKey: orderQueryKey(userId, orderId ?? ''),
     queryFn: () => fetchOrder(orderId ?? ''),
-    enabled: Boolean(orderId),
+    enabled: Boolean(orderId) && identityKnown,
   });
 }
 
 export function useCreateOrderMutation() {
   const queryClient = useQueryClient();
+  const { userId } = useUserScope();
+  const refreshCart = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: cartRootKey }),
+    queryClient.invalidateQueries({ queryKey: checkoutRootKey }),
+  ]);
 
   return useMutation({
+    mutationKey: ['orders', 'create'],
     mutationFn: async (customer: CustomerData) => {
       const { data } = await api.post<OrderData>('/orders', { customer });
       return data;
     },
     onSuccess: async (order) => {
-      queryClient.setQueryData(orderQueryKey(order.id), order);
+      queryClient.setQueryData(orderQueryKey(userId, order.id), order);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ordersQueryKey }),
-        queryClient.invalidateQueries({ queryKey: cartQueryKey }),
-        queryClient.invalidateQueries({ queryKey: checkoutQueryKey }),
+        queryClient.invalidateQueries({ queryKey: ordersRootKey }),
+        refreshCart(),
       ]);
     },
+    // 409 (unavailable products, insufficient stock) or 400 (empty cart):
+    // refresh so the page shows the cart as the server sees it.
+    onError: refreshCart,
   });
 }

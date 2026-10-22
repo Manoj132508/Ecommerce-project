@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { Header } from '../../components/Header';
+import { useRequireLogin } from '../../hooks/useRequireLogin';
 import { useAuthQuery } from '../../queries/useAuthQuery';
 import { useAddToCartMutation } from '../../queries/useCartQueries';
 import { useProductsQuery } from '../../queries/useProductsQuery';
 import { getErrorMessage } from '../../services/api';
+import { CART_LOGIN_NOTICE } from '../../slices/authUiSlice';
 import { formatMoney } from '../../utils/money';
 import { primaryButton, secondaryButton, selectInput } from '../../utils/tailwindClasses';
 
@@ -13,6 +15,7 @@ export function OneProductPage() {
   const { data: products = [], error, isError, isPending } = useProductsQuery();
   const { data: user = null } = useAuthQuery();
   const addToCartMutation = useAddToCartMutation();
+  const requireLogin = useRequireLogin();
   const [quantity, setQuantity] = useState(1);
   const [showAddedMessage, setShowAddedMessage] = useState(false);
   const addedMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -35,7 +38,7 @@ export function OneProductPage() {
     }
 
     if (!user) {
-      alert('Please log or register in to add items to your cart.');
+      requireLogin(CART_LOGIN_NOTICE);
       return;
     }
 

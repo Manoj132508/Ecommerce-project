@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { Header } from '../../components/Header';
 import { useRegisterMutation } from '../../queries/useAuthQuery';
 import { getErrorMessage } from '../../services/api';
+import { clearAuthNotice } from '../../slices/authUiSlice';
+import { useAppDispatch } from '../../store/hooks';
+import { safeReturnPath } from '../../utils/returnPath';
 
 export function RegisterPage() {
   const [name, setName] = useState('');
@@ -11,7 +14,12 @@ export function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [validationError, setValidationError] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
+  const dispatch = useAppDispatch();
   const registerMutation = useRegisterMutation();
+  const requestedPage = typeof location.state === 'object' && location.state !== null && 'from' in location.state
+    ? location.state.from
+    : undefined;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -29,7 +37,8 @@ export function RegisterPage() {
 
     try {
       await registerMutation.mutateAsync({ name, email, password });
-      navigate('/');
+      dispatch(clearAuthNotice());
+      navigate(safeReturnPath(requestedPage), { replace: true });
     } catch {
       // TanStack Query keeps the request error on registerMutation.error.
     }

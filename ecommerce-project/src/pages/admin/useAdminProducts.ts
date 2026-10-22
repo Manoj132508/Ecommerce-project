@@ -1,13 +1,12 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { cartQueryKey, checkoutQueryKey } from '../../queries/useCartQueries';
+import { cartRootKey, checkoutRootKey, ordersRootKey } from '../../queries/queryKeys';
 import {
   useCreateProductMutation,
   useDeleteProductMutation,
   useUpdateProductMutation,
 } from '../../queries/useProductMutations';
 import { useProductsQuery } from '../../queries/useProductsQuery';
-import { ordersQueryKey } from '../../queries/useOrdersQueries';
 import { getErrorMessage } from '../../services/api';
 import type { ProductFormData } from '../../types/product';
 
@@ -42,9 +41,9 @@ export function useAdminProducts() {
 
     try {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ordersQueryKey }),
-        queryClient.invalidateQueries({ queryKey: cartQueryKey }),
-        queryClient.invalidateQueries({ queryKey: checkoutQueryKey }),
+        queryClient.invalidateQueries({ queryKey: ordersRootKey }),
+        queryClient.invalidateQueries({ queryKey: cartRootKey }),
+        queryClient.invalidateQueries({ queryKey: checkoutRootKey }),
       ]);
     } finally {
       setRefreshingRelatedData(false);

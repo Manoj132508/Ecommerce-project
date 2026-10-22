@@ -1,10 +1,13 @@
 import axios from 'axios';
 
+/** localStorage key of the bearer token (unchanged storage; see MIGRATION_PLAN.md R30). */
+export const TOKEN_STORAGE_KEY = 'token';
+
 let memoryToken: string | null = null;
 
 export const getStoredToken = (): string | null => {
   try {
-    return localStorage.getItem('token') || memoryToken;
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || memoryToken;
   } catch {
     return memoryToken;
   }
@@ -15,9 +18,9 @@ export const setStoredToken = (token: string | null): void => {
 
   try {
     if (token) {
-      localStorage.setItem('token', token);
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
     } else {
-      localStorage.removeItem('token');
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   } catch {
     // The current session can still work when browser storage is unavailable.

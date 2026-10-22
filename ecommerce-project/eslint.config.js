@@ -70,4 +70,9 @@ export default [
       'react/prop-types': 'off',
     },
   },
+  {
+    // Test helpers are never hot-reloaded; the fast-refresh rule does not apply.
+    files: ['src/test/**', '**/*.test.{ts,tsx}'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
 ]

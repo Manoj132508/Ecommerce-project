@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link } from 'react-router';
+import { useRequireLogin } from '../../hooks/useRequireLogin';
 import { useAuthQuery } from '../../queries/useAuthQuery';
 import { useAddToCartMutation } from '../../queries/useCartQueries';
+import { getErrorMessage } from '../../services/api';
+import { CART_LOGIN_NOTICE } from '../../slices/authUiSlice';
 import { formatMoney } from '../../utils/money';
 import { primaryButton, selectInput } from '../../utils/tailwindClasses';
 import type { ProductData } from '../../types/product';
@@ -13,6 +16,7 @@ interface ProductProps {
 export function Product({ product }: ProductProps) {
   const { data: user = null } = useAuthQuery();
   const addToCartMutation = useAddToCartMutation();
+  const requireLogin = useRequireLogin();
   const [quantity, setQuantity] = useState(1);
   const [showAddedMessage, setShowAddedMessage] = useState(false);
   const addedMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -26,7 +30,7 @@ export function Product({ product }: ProductProps) {
   const addToCart = async () => {
     try {
       if (!user) {
-        alert('Please log or register in to add items to your cart.');
+        requireLogin(CART_LOGIN_NOTICE);
         return;
       }
 
@@ -50,6 +54,9 @@ export function Product({ product }: ProductProps) {
   };
 
   const productPath = `/products/${encodeURIComponent(product.id)}`;
+  const cartError = addToCartMutation.isError
+    ? getErrorMessage(addToCartMutation.error, 'Unable to add this product to your cart.')
+    : '';
 
   return (
     <article className="flex min-w-0 flex-col border-r border-b border-[#f0f0f0] px-3 pb-5 pt-6 sm:px-5 sm:pb-[25px] sm:pt-8 xl:px-[25px] xl:pt-10">
@@ -97,6 +104,8 @@ export function Product({ product }: ProductProps) {
         <img className="mr-1.5 h-[19px]" src="/images/icons/checkmark.png" alt="" />
         Added
       </div>
+
+      {cartError && <p className="mb-2 text-sm text-red-700" role="alert">{cartError}</p>}
 
       <button
         className={`${primaryButton} mt-px h-[34px] w-full p-2`}
