@@ -94,6 +94,10 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
       switch (result.kind) {
         case "empty":
           return res.status(400).json({ message: "Cart is empty" } satisfies ErrorResponse);
+        case "key-reused":
+          return res.status(422).json({
+            message: "This checkout request was already used with different details. Review your order and try again."
+          } satisfies ErrorResponse);
         case "unavailable":
           return res.status(409).json({
             message: "Remove unavailable products from your cart before placing the order",

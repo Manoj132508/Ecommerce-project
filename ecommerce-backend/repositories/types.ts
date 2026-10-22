@@ -79,6 +79,8 @@ export const ORDER_STATUSES: readonly OrderStatus[] = ["placed", "processing", "
 export type CheckoutResult =
   | { kind: "placed"; order: unknown }
   | { kind: "empty" }
+  /** The Idempotency-Key already belongs to this user's order for different details. */
+  | { kind: "key-reused" }
   | { kind: "unavailable"; productIds: string[] }
   | { kind: "invalid-delivery" }
   | { kind: "insufficient-stock"; productIds: string[] };

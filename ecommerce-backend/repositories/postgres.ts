@@ -392,6 +392,13 @@ interface OrderRow {
   status: string | null;
 }
 
+const sameCustomer = (row: OrderRow, customer: CustomerDetails) => (
+  row.customer_full_name === customer.fullName && row.customer_email === customer.email
+  && row.customer_phone === customer.phone && row.customer_address === customer.address
+  && row.customer_city === customer.city && row.customer_postal_code === customer.postalCode
+  && row.customer_country === customer.country
+);
+
 interface OrderLineRow {
   order_id: string;
   position: number;
@@ -540,21 +547,27 @@ export class PostgresOrderRepository implements OrderRepository {
     const userId = requireOwner(owner);
     try {
       return await withTransaction(this.pool, async (client): Promise<CheckoutResult> => {
-        const existingOrder = async () => {
+        // A key replays only the request it was first used with. The customer
+        // details are the whole request body and are stored on the order in
+        // the same normalised form, so they identify that request exactly.
+        const existingOrder = async (): Promise<CheckoutResult | null> => {
           if (!idempotencyKey) return null;
           const { rows } = await client.query<OrderRow>(
             `SELECT ${ORDER_COLUMNS} FROM orders WHERE user_id = $1 AND checkout_key = $2`,
             [userId, idempotencyKey],
           );
-          const [order] = await this.withLines(client, rows, false);
-          return order ?? null;
+          const [row] = rows;
+          if (!row) return null;
+          if (!sameCustomer(row, customer)) return { kind: "key-reused" };
+          const [order] = await this.withLines(client, [row], false);
+          return { kind: "placed", order };
         };
 
         // A retry can still recover its order even if the cart row was later
         // removed administratively. This first lookup is only a fast path;
         // the lookup after the cart lock is the concurrency guarantee.
         const replay = await existingOrder();
-        if (replay) return { kind: "placed", order: replay };
+        if (replay) return replay;
 
         // Locks this user's cart: concurrent checkouts of the same cart run one at a time.
         const { rows: [cart] } = await client.query<{ id: string }>(
@@ -563,7 +576,7 @@ export class PostgresOrderRepository implements OrderRepository {
         if (!cart) return { kind: "empty" };
 
         const replayAfterLock = await existingOrder();
-        if (replayAfterLock) return { kind: "placed", order: replayAfterLock };
+        if (replayAfterLock) return replayAfterLock;
 
         const { rows: lines } = await client.query<CheckoutLineRow>(
           `SELECT ci.product_id::text AS product_id, ci.quantity, ci.delivery_option_id,

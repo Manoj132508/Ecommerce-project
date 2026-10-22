@@ -81,10 +81,10 @@ async function seed() {
 const addToCart = (userId: string, productId: unknown, quantity: unknown) => (
   app().post("/api/cart-items").set(auth(userId)).send({ productId, quantity })
 );
-const checkout = (userId: string, idempotencyKey?: string) => {
+const checkout = (userId: string, idempotencyKey?: string, customer: typeof CUSTOMER = CUSTOMER) => {
   const pending = app().post("/api/orders").set(auth(userId));
   if (idempotencyKey) pending.set("Idempotency-Key", idempotencyKey);
-  return pending.send({ customer: CUSTOMER });
+  return pending.send({ customer });
 };
 const count = async (table: string) => Number((await sql(`SELECT count(*) FROM ${table}`)).rows[0]?.count);
 
@@ -372,6 +372,87 @@ describe("checkout (transactional)", () => {
     expect(await count("orders WHERE NOT is_legacy")).toBe(1);
     expect((await checkout(ALICE_ID, key)).body.id).toBe(responses[0]?.body.id);
     expect((await checkout(BOB_ID, key)).body).toEqual({ message: "Cart is empty" });
+  });
+
+  test("a key reused with different details is refused and changes nothing", async () => {
+    const key = "22222222-2222-4222-8222-222222222222";
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const first = await checkout(ALICE_ID, key);
+    expect(first.status).toBe(201);
+    await addToCart(ALICE_ID, BALL, 2);
+
+    const reused = await checkout(ALICE_ID, key, { ...CUSTOMER, address: "2 Different Road" });
+
+    expect(reused.status).toBe(422);
+    expect(reused.body).toEqual({
+      message: "This checkout request was already used with different details. Review your order and try again.",
+    });
+    expect(await count("orders WHERE NOT is_legacy")).toBe(1);
+    expect((await app().get("/api/cart-items").set(auth(ALICE_ID))).body).toHaveLength(1);
+    const { rows: [stored] } = await sql("SELECT customer_address FROM orders WHERE id = $1", [first.body.id]);
+    expect(stored).toEqual({ customer_address: "1 Analytical Way" });
+  });
+
+  test("details that normalise to the same values replay instead of conflicting", async () => {
+    const key = "33333333-3333-4333-8333-333333333333";
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const first = await checkout(ALICE_ID, key);
+    const again = await checkout(ALICE_ID, key, { ...CUSTOMER, email: "ada@example.com", city: "London" });
+    expect(again.status).toBe(201);
+    expect(again.body.id).toBe(first.body.id);
+  });
+
+  test("a late retry returns the original order and leaves a refilled cart alone", async () => {
+    const key = "44444444-4444-4444-8444-444444444444";
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const first = await checkout(ALICE_ID, key);
+    await addToCart(ALICE_ID, BALL, 3);
+
+    const retry = await checkout(ALICE_ID, key);
+
+    expect(retry.status).toBe(201);
+    expect(retry.body).toEqual(first.body);
+    expect(await count("orders WHERE NOT is_legacy")).toBe(1);
+    const cart = (await app().get("/api/cart-items").set(auth(ALICE_ID))).body;
+    expect(cart).toEqual([expect.objectContaining({ productId: BALL, quantity: 3 })]);
+  });
+
+  test("a fresh key places a new intentional order", async () => {
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const first = await checkout(ALICE_ID, "55555555-5555-4555-8555-555555555555");
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const second = await checkout(ALICE_ID, "66666666-6666-4666-8666-666666666666");
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(second.body.id).not.toBe(first.body.id);
+    expect(await count("orders WHERE NOT is_legacy")).toBe(2);
+  });
+
+  test("a checkout interrupted before commit stores nothing, and the same key then succeeds", async () => {
+    const key = "77777777-7777-4777-8777-777777777777";
+    await addToCart(ALICE_ID, SOCKS, 2);
+    // Fails the last statement before the cart is cleared, after the order and its lines were inserted.
+    await sql(`CREATE FUNCTION test_interrupt() RETURNS trigger LANGUAGE plpgsql AS $$
+               BEGIN RAISE EXCEPTION 'simulated interruption'; END; $$`);
+    await sql(`CREATE TRIGGER test_interrupt BEFORE INSERT ON order_status_events
+               FOR EACH ROW EXECUTE FUNCTION test_interrupt()`);
+
+    const failed = await checkout(ALICE_ID, key);
+
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ message: "Unable to place the order" });
+    expect(await count("orders WHERE NOT is_legacy")).toBe(0);
+    expect(await count("order_items")).toBe(2); // the legacy order's lines only
+    expect(await count(`orders WHERE checkout_key = '${key}'`)).toBe(0);
+    expect((await app().get("/api/cart-items").set(auth(ALICE_ID))).body).toEqual([
+      expect.objectContaining({ productId: SOCKS, quantity: 2 }),
+    ]);
+
+    await sql("DROP TRIGGER test_interrupt ON order_status_events");
+    await sql("DROP FUNCTION test_interrupt()");
+    const retried = await checkout(ALICE_ID, key);
+    expect(retried.status).toBe(201);
+    expect(await count("orders WHERE NOT is_legacy")).toBe(1);
+    expect((await app().get("/api/cart-items").set(auth(ALICE_ID))).body).toEqual([]);
   });
 
   test("rejects a malformed Idempotency-Key before changing the cart", async () => {

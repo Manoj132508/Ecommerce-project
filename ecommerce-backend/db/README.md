@@ -171,6 +171,7 @@ products (referenced by id only)          data_import_runs (audit)
 
 - **Retry-safe checkout.** `orders.checkout_key` stores an optional UUID supplied through `Idempotency-Key`. A partial unique index on `(user_id, checkout_key)` scopes a key to one customer.
 - **Concurrent requests.** The repository checks for an existing order before and after locking the customer's cart. Simultaneous requests with the same key and later retries all return the original order instead of creating duplicates or reporting an empty cart.
+- **Key reuse (Phase 5F).** A key replays only the request it was first used with: the stored, normalised customer details must match, otherwise the API answers `422` and writes nothing. Keys are kept for the life of the order (no expiry or cleanup); a failed or rolled-back checkout stores no key.
 - **History protection.** A trigger makes a recorded key immutable. Existing and imported orders keep `NULL`; no key is invented. The down migration removes only this column, trigger and index, so take a backup first as for every rollback.
 
 PostgreSQL is used by the API only for domains selected with `DATA_SOURCE_*`
