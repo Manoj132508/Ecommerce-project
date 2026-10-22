@@ -1,0 +1,8 @@
+# Next.js build output and generated types
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Local settings (copy .env.example to .env.local)
+.env*.local
