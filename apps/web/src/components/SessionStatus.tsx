@@ -77,6 +77,7 @@ export function SessionStatus() {
           </button>
           <Link href="/checkout" className={linkClass}>Checkout</Link>
           <Link href="/orders" className={linkClass}>Orders</Link>
+          {session.data.user.isAdmin && <Link href="/admin" className={linkClass}>Admin</Link>}
           <Link href="/account" className={`${linkClass} max-w-40 truncate`}>{session.data.user.name}</Link>
           <button
             type="button"
@@ -101,6 +102,7 @@ export function SessionStatus() {
             </button>
             <Link href="/checkout" onClick={() => dispatch(menuClosed())} className={linkClass}>Checkout</Link>
             <Link href="/orders" onClick={() => dispatch(menuClosed())} className={linkClass}>Orders</Link>
+            {session.data.user.isAdmin && <Link href="/admin" onClick={() => dispatch(menuClosed())} className={linkClass}>Admin</Link>}
             <Link href="/account" onClick={() => dispatch(menuClosed())} className={linkClass}>Account</Link>
             <button type="button" onClick={signOutAndRefresh} className="rounded bg-red-600 px-3 py-2 text-left font-semibold">Sign out</button>
           </div>

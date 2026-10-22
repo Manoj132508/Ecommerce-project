@@ -11,7 +11,7 @@ describe("robots.txt", () => {
   test("keeps crawlers out of private pages and the API, and names the sitemap", async () => {
     const { default: robots } = await import("./robots");
     expect(robots()).toEqual({
-      rules: [{ userAgent: "*", allow: "/", disallow: ["/api/", "/account", "/cart", "/checkout", "/orders", "/tracking", "/login", "/register"] }],
+      rules: [{ userAgent: "*", allow: "/", disallow: ["/api/", "/account", "/cart", "/checkout", "/orders", "/tracking", "/login", "/register", "/admin"] }],
       sitemap: "https://shop.example.com/sitemap.xml",
     });
   });
