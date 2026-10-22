@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   ...(publicEnv.siteUrl ? { metadataBase: publicEnv.siteUrl } : {}),
   title: { default: publicEnv.appName, template: `%s · ${publicEnv.appName}` },
   description: "Online store",
+  // Safari/WebKit otherwise turns phone numbers, dates and addresses in
+  // server-rendered text into links before React hydrates (hydration errors).
+  formatDetection: { telephone: false, date: false, address: false, email: false },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

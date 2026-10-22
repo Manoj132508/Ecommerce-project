@@ -33,7 +33,11 @@ export function CheckoutPageClient({ user }: { user: SessionUser }) {
   const checkout = useCheckoutQuery();
   const create = useCreateOrder();
   const [customer, setCustomer] = useState(() => emptyCustomer(user));
-  const idempotencyKey = useRef<string | null>(null);
+  // One key per reviewed set of details: retries of the same review replay
+  // safely, and changed details start a new attempt (the server refuses a key
+  // reused with different details). A completed attempt has already cleared
+  // the cart, so a new key can never place a second order for it.
+  const attempt = useRef<{ key: string; details: string } | null>(null);
   const items = cart.data ?? [];
   const summary = checkout.data?.paymentSummary;
   const invalid = items.some((item) => item.unavailable) || Boolean(summary?.unavailableProductIds.length);
@@ -49,15 +53,16 @@ export function CheckoutPageClient({ user }: { user: SessionUser }) {
   const review = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!summary?.totalItems || invalid) return;
-    idempotencyKey.current ??= crypto.randomUUID();
+    const details = JSON.stringify(customer);
+    if (attempt.current?.details !== details) attempt.current = { key: crypto.randomUUID(), details };
     dispatch(checkoutStepChanged("review"));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const placeOrder = async () => {
-    if (create.isPending || !idempotencyKey.current || !summary?.totalItems || invalid) return;
+    if (create.isPending || !attempt.current || !summary?.totalItems || invalid) return;
     try {
-      const order = await create.mutateAsync({ customer, idempotencyKey: idempotencyKey.current });
+      const order = await create.mutateAsync({ customer, idempotencyKey: attempt.current.key });
       dispatch(checkoutStepChanged("details"));
       router.replace(`/orders/${encodeURIComponent(order.id)}?placed=1`);
     } catch {
@@ -72,6 +77,12 @@ export function CheckoutPageClient({ user }: { user: SessionUser }) {
     return (
       <section className="rounded-lg border p-8 text-center">
         <h1 className="mb-2 text-2xl font-bold">Your cart is empty</h1>
+        {create.isError && (
+          // The response to an earlier attempt was lost, but the server may still have placed the order.
+          <p role="status" className="mb-3 text-slate-700">
+            Your last attempt may have completed. <Link href="/orders" className="font-semibold text-[#08783e] underline">Check your orders</Link> before ordering again.
+          </p>
+        )}
         <Link href="/products" className="font-semibold text-[#08783e] underline">Continue shopping</Link>
       </section>
     );

@@ -137,6 +137,88 @@ describe("header session state", () => {
     expect(search.closest("form")).toHaveAttribute("action", "/products");
   });
 
+  test("the search box shows the current search, and sign-in returns to it", async () => {
+    navigation.reset("/products", "q=sun&category=Accessories");
+    fakeApi({ "GET /api/auth/session": { status: 401, body: { message: "Not authorized" } } });
+    renderWithProviders(<SiteHeader />);
+    expect(screen.getByRole("searchbox", { name: "Search products" })).toHaveValue("sun");
+    expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute("href", `/login?from=${encodeURIComponent("/products?q=sun&category=Accessories")}`);
+  });
+
+  test("on the home and sign-in pages the sign-in link carries no return path", async () => {
+    fakeApi({ "GET /api/auth/session": { status: 401, body: { message: "Not authorized" } } });
+    navigation.reset("/login", "from=%2Forders");
+    const { unmount } = renderWithProviders(<SiteHeader />);
+    expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    unmount();
+    navigation.reset("/");
+    renderWithProviders(<SiteHeader />);
+    expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+  });
+
+  test("the cart drawer takes focus, keeps Tab inside, and gives focus back when closed", async () => {
+    fakeApi({
+      "GET /api/cart-items?expand=product": { status: 200, body: [] },
+      "GET /api/delivery-options?expand=estimatedDeliveryTime": { status: 200, body: [] },
+      "GET /api/payment-summary": { status: 200, body: { totalItems: 0, productCostCents: 0, shippingCostCents: 0, totalCostBeforeTaxCents: 0, taxCents: 0, totalCostCents: 0, unavailableProductIds: [] } },
+    });
+    const { user } = renderWithProviders(<SiteHeader />, { session: SESSION });
+    const opener = screen.getByRole("button", { name: /Open cart drawer/ });
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "Your cart" });
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close).toHaveFocus();
+    expect(document.body.style.overflow).toBe("hidden");
+    await screen.findByRole("link", { name: "Browse products" });
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Browse products" })).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  test("Escape closes the mobile menu and returns focus to its button", async () => {
+    fakeApi({ "GET /api/cart-items?expand=product": { status: 200, body: [] } });
+    const { user } = renderWithProviders(<SiteHeader />, { session: SESSION });
+    const menu = screen.getByRole("button", { name: /^Menu/ });
+    await user.click(menu);
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    expect(menu).toHaveFocus();
+  });
+
+  test("hydrates without a mismatch even when the session arrived before the header hydrated (WebKit timing)", async () => {
+    const { renderToString } = await import("react-dom/server");
+    const { hydrateRoot } = await import("react-dom/client");
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { Provider } = await import("react-redux");
+    const { makeStore } = await import("@/store/store");
+    fakeApi({ "GET /api/cart-items?expand=product": { status: 200, body: [] } });
+    const tree = (client: InstanceType<typeof QueryClient>) => (
+      <Provider store={makeStore()}><QueryClientProvider client={client}><SiteHeader /></QueryClientProvider></Provider>
+    );
+    // The server has no session yet.
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(tree(new QueryClient()));
+    document.body.append(container);
+    // In the browser the session query has already resolved when this boundary hydrates.
+    const client = new QueryClient();
+    client.setQueryData(sessionQueryKey, SESSION);
+    const recoverable: unknown[] = [];
+    await act(async () => {
+      hydrateRoot(container, tree(client), { onRecoverableError: (error) => recoverable.push(error) });
+    });
+    expect(recoverable).toEqual([]);
+    expect(await screen.findByRole("link", { name: "Alice" })).toBeInTheDocument();
+    container.remove();
+  });
+
   test("signed in: account link and sign-out (CSRF-protected), which clears the user's data", async () => {
     const { requests } = fakeApi({ "DELETE /api/auth/session": { status: 204 } });
     const { user, queryClient } = renderWithProviders(<SiteHeader />, { session: SESSION });

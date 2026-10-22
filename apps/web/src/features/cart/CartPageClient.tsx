@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { ProductImage } from "@/features/catalog/ProductImage";
 import { formatMoney } from "@/features/catalog/product";
+import { formatDeliveryDay } from "@/lib/format";
 import { useCartQuery, useCheckoutQuery, useRemoveCartItem, useUpdateCartItem } from "./hooks";
 
 const quantities = Array.from({ length: 10 }, (_, index) => index + 1);
-const date = (milliseconds: number) => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(milliseconds);
+const date = formatDeliveryDay;
 
 export function CartPageClient() {
   const cart = useCartQuery();
@@ -42,7 +43,7 @@ export function CartPageClient() {
               <article key={item.productId} className={`rounded-lg border p-4 sm:p-5 ${item.unavailable ? "border-red-300 bg-red-50" : "bg-white"}`}>
                 {item.product ? (
                   <div className="grid gap-5 sm:grid-cols-[120px_1fr]">
-                    <ProductImage product={item.product} sizes="120px" />
+                    <ProductImage product={item.product} sizes="120px" className="w-28 sm:w-full" />
                     <div>
                       <div className="flex flex-col justify-between gap-2 sm:flex-row">
                         <div><h2 className="font-bold">{item.product.name}</h2><p className="font-semibold text-[#08783e]">{formatMoney(item.product.priceCents)}</p></div>

@@ -22,6 +22,29 @@ export const ALL_POSTGRES = {
   DATA_SOURCE_CARTS: "postgres", DATA_SOURCE_ORDERS: "postgres",
 };
 
+/** [id, name, image file, category, keywords]: real catalogue images, prices 10.00, 12.50, … */
+export const SEED_PRODUCTS = [
+  ["e43638ce-6aa0-4b85-b27f-e1d07eb678c6", "Athletic Skateboard Shoes", "athletic-skateboard-shoes-gray.jpg", "Footwear", "{shoes,sports}"],
+  ["15b6fc6f-327a-4ec4-896f-486349e85a3d", "Luxury Towel Set", "luxury-towel-set.jpg", "Home", "{bathroom,towels}"],
+  ["83d4ca15-0f35-48f5-b7a3-1ea210004f2e", "Espresso Maker", "black-and-silver-espresso-maker.jpg", "Kitchen", "{coffee,appliances}"],
+  ["54e0eccd-8f36-462b-b68a-8182611d9add", "Round Sunglasses", "round-sunglasses-gold.jpg", "Accessories", "{sunglasses}"],
+  ["3ebe75dc-64d2-4137-8860-1f5a963e534b", "Straw Sunhat", "straw-sunhat.jpg", "Accessories", "{hats,summer}"],
+  ["5968897c-4d33-4aa0-9c5b-f7e1d8b7fc43", "Bathroom Mat", "bathroom-mat.jpg", "Home", "{bathroom}"],
+];
+
+/** The test catalogue: one free delivery option and SEED_PRODUCTS, in this order. */
+export async function seedCatalog(pool) {
+  await pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('1', 7, 0)");
+  for (const [index, [id, name, file, category, keywords]] of SEED_PRODUCTS.entries()) {
+    await pool.query(
+      `INSERT INTO products (id, image, name, description, how_it_works, highlights, care_instructions, category,
+                             stock, rating_stars, rating_count, price_cents, keywords, created_at)
+       VALUES ($1, $2, $3, $4, 'Use it.', '{Durable}', 'Keep clean.', $5, 0, 4.5, 10, $6, $7, now() + make_interval(secs => $8))`,
+      [id, `images/products/${file}`, name, `${name} description.`, category, 1000 + index * 250, keywords, index],
+    );
+  }
+}
+
 export function createChecker() {
   const result = { passed: 0, failed: 0 };
   const check = (name, ok, detail = "") => {

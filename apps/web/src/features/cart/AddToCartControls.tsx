@@ -9,7 +9,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { endLocalSession, useSession } from "@/features/auth/hooks";
 import { NOTICES } from "@/features/auth/notices";
 import { ApiError, apiFetch } from "@/lib/api/client";
-import { cartQueryRoot } from "@/lib/queryKeys";
+import { cartQueryRoot, checkoutQueryRoot } from "@/lib/queryKeys";
+import { refetchAfterWrite } from "@/lib/refetchAfterWrite";
 import { safeReturnPath } from "@/lib/returnPath";
 import { useAppDispatch } from "@/store/hooks";
 import { noticeShown } from "@/store/uiSlice";
@@ -45,7 +46,7 @@ export function AddToCartControls({ productId, productName, returnTo, compact = 
     mutationKey: ["cart", "add"],
     mutationFn: (csrfToken: string) => apiFetch("/cart-items", { method: "POST", body: { productId, quantity }, csrfToken }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: cartQueryRoot });
+      void refetchAfterWrite(queryClient, [cartQueryRoot, checkoutQueryRoot]);
       setAdded(true);
       clearTimeout(timer.current);
       timer.current = setTimeout(() => setAdded(false), 2000);

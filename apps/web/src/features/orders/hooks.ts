@@ -1,8 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSession } from "@/features/auth/hooks";
-import { ApiError } from "@/lib/api/client";
+import { requireCsrfToken, useSession } from "@/features/auth/hooks";
 import {
   cartQueryRoot,
   checkoutQueryRoot,
@@ -10,6 +9,7 @@ import {
   ordersQueryKey,
   ordersQueryRoot,
 } from "@/lib/queryKeys";
+import { refetchAfterWrite } from "@/lib/refetchAfterWrite";
 import { createOrder, fetchOrder, fetchOrders, type CustomerDetails, type Order } from "./api";
 
 export function useOrdersQuery() {
@@ -39,25 +39,14 @@ export function useCreateOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ["orders", "create"],
-    mutationFn: ({ customer, idempotencyKey }: { customer: CustomerDetails; idempotencyKey: string }) => {
-      const csrfToken = session.data?.csrfToken;
-      if (!csrfToken) throw new ApiError(401, "Sign in again to continue.");
-      return createOrder(customer, csrfToken, idempotencyKey);
-    },
+    mutationFn: async ({ customer, idempotencyKey }: { customer: CustomerDetails; idempotencyKey: string }) => (
+      createOrder(customer, await requireCsrfToken(queryClient), idempotencyKey)
+    ),
     onSuccess: async (order) => {
       const userId = session.data?.user._id;
       if (userId) queryClient.setQueryData(orderQueryKey(userId, order.id), order);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: cartQueryRoot }),
-        queryClient.invalidateQueries({ queryKey: checkoutQueryRoot }),
-        queryClient.invalidateQueries({ queryKey: ordersQueryRoot }),
-      ]);
+      await refetchAfterWrite(queryClient, [cartQueryRoot, checkoutQueryRoot, ordersQueryRoot]);
     },
-    onError: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: cartQueryRoot }),
-        queryClient.invalidateQueries({ queryKey: checkoutQueryRoot }),
-      ]);
-    },
+    onError: () => refetchAfterWrite(queryClient, [cartQueryRoot, checkoutQueryRoot]),
   });
 }

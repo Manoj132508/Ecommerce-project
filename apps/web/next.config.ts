@@ -16,6 +16,15 @@ const nextConfig: NextConfig = {
     deviceSizes: [640, 750, 828, 1080],
     imageSizes: [96, 128, 160, 192, 256, 384],
   },
+  // Vite routes whose job moved: the details form and confirmation are the
+  // checkout review step, and a deleted product is explained on the order
+  // line itself. Temporary (307) while the Vite app is still live.
+  async redirects() {
+    return [
+      { source: "/order-confirmation", destination: "/checkout", permanent: false },
+      { source: "/product-unavailable", destination: "/orders", permanent: false },
+    ];
+  },
   async headers() {
     return [
       {

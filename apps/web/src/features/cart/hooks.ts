@@ -1,14 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSession } from "@/features/auth/hooks";
-import { ApiError } from "@/lib/api/client";
+import { requireCsrfToken, useSession } from "@/features/auth/hooks";
 import {
   cartQueryKey,
   cartQueryRoot,
   checkoutQueryKey,
   checkoutQueryRoot,
 } from "@/lib/queryKeys";
+import { refetchAfterWrite } from "@/lib/refetchAfterWrite";
 import { addCartItem, fetchCart, fetchCheckoutData, removeCartItem, updateCartItem } from "./api";
 
 export function useCartQuery() {
@@ -34,19 +34,11 @@ export function useCheckoutQuery(enabled = true) {
 }
 
 function useCartMutation<T>(key: string, request: (variables: T, csrfToken: string) => Promise<unknown>) {
-  const session = useSession();
   const queryClient = useQueryClient();
-  const reconcile = () => Promise.all([
-    queryClient.invalidateQueries({ queryKey: cartQueryRoot }),
-    queryClient.invalidateQueries({ queryKey: checkoutQueryRoot }),
-  ]);
+  const reconcile = () => refetchAfterWrite(queryClient, [cartQueryRoot, checkoutQueryRoot]);
   return useMutation({
     mutationKey: ["cart", key],
-    mutationFn: (variables: T) => {
-      const csrfToken = session.data?.csrfToken;
-      if (!csrfToken) throw new ApiError(401, "Sign in again to continue.");
-      return request(variables, csrfToken);
-    },
+    mutationFn: async (variables: T) => request(variables, await requireCsrfToken(queryClient)),
     onSuccess: reconcile,
     onError: reconcile,
   });

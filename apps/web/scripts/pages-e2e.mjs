@@ -15,19 +15,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CookieJar } from "tough-cookie";
 import {
-  ALL_POSTGRES, BACKEND, createChecker, freePort, request, requireBuilds, start, startThrowawayPostgres, stop, waitFor, WEB,
+  ALL_POSTGRES, BACKEND, createChecker, freePort, request, requireBuilds, SEED_PRODUCTS as PRODUCTS, seedCatalog, start,
+  startThrowawayPostgres, stop, waitFor, WEB,
 } from "./e2e-support.mjs";
 
 const VITE_IMAGES = path.resolve(WEB, "../../ecommerce-project/public");
 const PROXY_SECRET = randomBytes(24).toString("hex");
-const PRODUCTS = [
-  ["e43638ce-6aa0-4b85-b27f-e1d07eb678c6", "Athletic Skateboard Shoes", "athletic-skateboard-shoes-gray.jpg", "Footwear", "{shoes,sports}"],
-  ["15b6fc6f-327a-4ec4-896f-486349e85a3d", "Luxury Towel Set", "luxury-towel-set.jpg", "Home", "{bathroom,towels}"],
-  ["83d4ca15-0f35-48f5-b7a3-1ea210004f2e", "Espresso Maker", "black-and-silver-espresso-maker.jpg", "Kitchen", "{coffee,appliances}"],
-  ["54e0eccd-8f36-462b-b68a-8182611d9add", "Round Sunglasses", "round-sunglasses-gold.jpg", "Accessories", "{sunglasses}"],
-  ["3ebe75dc-64d2-4137-8860-1f5a963e534b", "Straw Sunhat", "straw-sunhat.jpg", "Accessories", "{hats,summer}"],
-  ["5968897c-4d33-4aa0-9c5b-f7e1d8b7fc43", "Bathroom Mat", "bathroom-mat.jpg", "Home", "{bathroom}"],
-];
 const NAMES = PRODUCTS.map(([, name]) => name);
 
 const { check, result } = createChecker();
@@ -38,15 +31,7 @@ async function main() {
   const { pool, databaseUrl } = database;
   const children = [];
   try {
-    await pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('1', 7, 0)");
-    for (const [index, [id, name, file, category, keywords]] of PRODUCTS.entries()) {
-      await pool.query(
-        `INSERT INTO products (id, image, name, description, how_it_works, highlights, care_instructions, category,
-                               stock, rating_stars, rating_count, price_cents, keywords, created_at)
-         VALUES ($1, $2, $3, $4, 'Use it.', '{Durable}', 'Keep clean.', $5, 0, 4.5, 10, $6, $7, now() + make_interval(secs => $8))`,
-        [id, `images/products/${file}`, name, `${name} description.`, category, 1000 + index * 250, keywords, index],
-      );
-    }
+    await seedCatalog(pool);
 
     for (const mode of ["production", "development"]) {
       const port = await freePort();
@@ -191,6 +176,9 @@ async function productionChecks(origin, pool) {
   const orderId = orderIds[0];
   const orderRows = await pool.query("SELECT count(*)::int AS count FROM orders WHERE checkout_key = $1", [checkoutKey]);
   check("checkout: exactly one database order for the key", orderRows.rows[0]?.count === 1);
+  const reused = await api("POST", "/orders", { customer: { fullName: "Nora", email, phone: "07123", address: "9 Other Road", city: "London", postalCode: "N1 1AA", country: "United Kingdom" } }, { "X-CSRF-Token": csrf, "Idempotency-Key": checkoutKey });
+  check("checkout: the key reused with different details is refused (422), nothing added", reused.status === 422
+    && (await pool.query("SELECT count(*)::int AS count FROM orders WHERE customer_email = lower($1)", [email])).rows[0]?.count === 1, String(reused.status));
   const orders = await api("GET", "/orders?expand=products");
   check("orders: owner sees stored snapshot and private no-store response", orders.status === 200 && orders.json?.[0]?.products?.[0]?.product?.priceCents === 1000
     && orders.headers["cache-control"]?.includes("no-store"));
@@ -198,6 +186,21 @@ async function productionChecks(origin, pool) {
   check("order detail: owner gets server-checked page", orderPage.status === 200 && orderPage.text.includes("Order details") && orderPage.text.includes(String(orderId)));
   const guessed = await request(`${origin}/orders/${orderId}`, { jar: bob });
   check("order detail: another user gets a real 404", guessed.status === 404 && guessed.text.includes("Order not found"), String(guessed.status));
+
+  // Package tracking (the Vite /tracking page): owner only, server-checked.
+  const trackingPath = `/tracking?orderId=${orderId}&productId=${PRODUCTS[0][0]}`;
+  const tracking = await request(`${origin}${trackingPath}`, { jar: browser });
+  check("tracking: owner sees the package and its progress", tracking.status === 200 && tracking.text.includes("Arriving on") && tracking.text.includes('role="progressbar"'), String(tracking.status));
+  check("tracking: another user gets a real 404", (await request(`${origin}${trackingPath}`, { jar: bob })).status === 404);
+  const trackingSignedOut = await request(`${origin}${trackingPath}`);
+  check("tracking: signed out → sign-in with the full return path", trackingSignedOut.status === 307
+    && trackingSignedOut.headers.location?.includes(`from=${encodeURIComponent(trackingPath)}`), `${trackingSignedOut.status} ${trackingSignedOut.headers.location}`);
+
+  // Authenticated HTML is never stored by browsers or shared caches.
+  for (const pagePath of ["/account", "/cart", "/checkout", "/orders", `/orders/${orderId}`, trackingPath]) {
+    const page = await request(`${origin}${pagePath}`, { jar: browser });
+    check(`private page ${pagePath.split("?")[0]}: Cache-Control no-store`, page.status === 200 && /no-store/.test(page.headers["cache-control"] ?? "") && !/public|s-maxage/.test(page.headers["cache-control"] ?? ""), `${page.status} ${page.headers["cache-control"]}`);
+  }
 
   const bobSignedOut = await bobApi("DELETE", "/auth/session", undefined, { "X-CSRF-Token": bobSession.json?.csrfToken ?? "" });
   check("second user signs out cleanly", bobSignedOut.status === 204);
@@ -221,6 +224,20 @@ async function productionChecks(origin, pool) {
 
   const foreign = await request(`${origin}/api/products`, { headers: { Origin: "https://evil.example" } });
   check("rejected origin through the proxy: JSON 403", foreign.status === 403 && foreign.json?.message === "Origin not allowed");
+
+  // Vite routes whose job moved, and crawler files.
+  for (const [from, to] of [["/order-confirmation", "/checkout"], ["/product-unavailable", "/orders"]]) {
+    const moved = await request(`${origin}${from}`);
+    check(`legacy ${from} → temporary redirect to ${to}`, moved.status === 307 && moved.headers.location === to, `${moved.status} ${moved.headers.location}`);
+  }
+  const robots = await request(`${origin}/robots.txt`);
+  check("robots.txt keeps crawlers out of private pages and the API", robots.status === 200
+    && ["/api/", "/account", "/cart", "/checkout", "/orders", "/tracking"].every((path) => robots.text.includes(`Disallow: ${path}`)), robots.text);
+  const sitemap = await request(`${origin}/sitemap.xml`);
+  // NEXT_PUBLIC_SITE_URL is inlined at build time and this build has none: a
+  // valid, empty sitemap and no Sitemap line (the listed case is a unit test).
+  check("sitemap.xml without a public origin: valid and empty", sitemap.status === 200 && sitemap.text.includes("<urlset") && !sitemap.text.includes("<loc>")
+    && !robots.text.includes("Sitemap:"), `${sitemap.status}`);
 }
 
 async function developmentChecks(origin) {
