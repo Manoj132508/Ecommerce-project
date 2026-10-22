@@ -1,6 +1,6 @@
 # Migration Plan: MongoDB/Vite → PostgreSQL/Next.js (TypeScript)
 
-Status: **Phases 0–3C committed and pushed. Phase 4 completed LOCALLY (all five domains switched to PostgreSQL on the local development environment, verified, rolled back and re-switched); frontend auth/cart compatibility committed locally. MongoDB is still the default; no production setting, deployment or production data was touched. Production cutover not started.**
+Status: **Phases 0–3C and Phase 4 (local) committed and pushed. All five domains switched to PostgreSQL on the local development environment only. Frontend security update (R29) done: `npm audit` 0. R31 rollback design and reverse-reconciliation proof of concept done, on disposable databases only. Auth cookie plan (R30) written, not implemented. MongoDB is still the default; no production setting, deployment or production data was touched. Production cutover not started.**
 
 > **Production blocker (updated 2026-10-21):** the backend is hosted on **Render** (owner). The production **MongoDB provider and location are still unknown** and must be verified before any production data operation (backup, profile, import). Render's current build/start settings aren't visible from the repository; the required changes are documented in §6 "Render deployment preparation" and have **not** been applied.
 Inspected: 2026-10-21 against `main` @ `4e622f5` plus the uncommitted working tree (now committed on `backup/wip-ts-postgres-2026-10-21` @ `74522fa`).
@@ -241,10 +241,12 @@ Field-level conversions:
 | R26 | Switching carts to PostgreSQL makes cart routes require login (D1); the frontend had to handle 401 | ~~Medium~~ **Resolved (Phase 4 frontend)** | Session watcher: a 401 from cart/checkout/order data opens the login flow with a validated return path; add-to-cart while signed out opens it too; cache keys include the user id. The legacy MongoDB cart never returns 401, so it is unaffected. 44 frontend tests in both cart modes |
 | R27 | JSON key order of products whose MongoDB document lacked `stock` differs between stores (MongoDB puts `stock` first) | Low | Key order has no meaning in JSON; content verified equal on real data (23/23). The MongoDB path itself is byte-identical to before (48/48) |
 | R28 | The transaction-local flag that authorises `change_order_status()` can be set by any session with the application's database role | Low | It guards against accidental direct updates, not a compromised application. Every change is still audited in `order_status_events` (append-only) |
-| R29 | Frontend `npm audit`: 16 pre-existing advisories (1 critical via `axios` → `form-data`; high in `axios`, `react-router`/`turbo-stream`, and lint/build tooling) | **High** | Phase 4 reduced 22 → 16 (Vite 6.4.4) and added none. Fix needs a separate, approved dependency update (`axios`, `react-router` semver-compatible) with the frontend tests as the gate. Return paths are already validated by `safeReturnPath`, which addresses the open-redirect class |
-| R30 | The bearer token is kept in `localStorage` (unchanged since before the migration), so an XSS bug could read it | Medium | Not weakened or moved; never stored in Redux. A move to an httpOnly, `SameSite` cookie needs backend changes (cookie auth, CSRF protection, cross-site Vercel ↔ Render settings) and is a separate decision |
-| R31 | **Rollback limit.** Records written after a domain switches to PostgreSQL (new users, orders, carts, status changes) do not exist in MongoDB; rolling that domain back hides them (verified: a PostgreSQL-only user gets 401 after rollback) | **High (production)** | Locally verified and documented. For production: switch at low traffic, keep the rollback window short, and decide in advance whether post-switch writes are re-imported into MongoDB (no reverse sync exists) or accepted as lost on rollback |
+| R29 | Frontend `npm audit`: 16 advisories (1 critical via `axios` → `form-data`; high in `axios`, `react-router`/`turbo-stream`, and lint/build tooling) | ~~High~~ **Resolved (2026-10-22, `69a47e0`)** | `axios` 1.8.4 → 1.20.0 (`form-data` 4.0.6, `follow-redirects` 1.16.1), `react-router` 7.1.5 → 7.18.4 (same major; the app uses only the declarative API), `eslint` 9.39.5, plus a non-force `npm audit fix` for transitive dev tooling. No major upgrades. **`npm audit`: 0** (production-only: 0). Frontend tests 47/47 (3 new open-redirect cases), typecheck, lint and build pass |
+| R30 | The bearer token is kept in `localStorage` (unchanged since before the migration), so an XSS bug could read it | Medium | Not weakened or moved; never stored in Redux. **Plan written: "Auth hardening plan (R30)" below** (HttpOnly session cookie behind a same-origin `/api` proxy, CSRF and Origin checks, revocable sessions, a migration window for existing tokens). Not implemented; decide before Phase 5 so the Next.js app is not built on `localStorage` |
+| R31 | **Rollback limit.** Records written after a domain switches to PostgreSQL (new users, orders, carts, status changes, catalogue edits) do not exist in MongoDB; rolling that domain back hides them (verified: a PostgreSQL-only user gets 401 after rollback) | **High (production)** | **Strategy and proof of concept done (2026-10-22), see "Production cutover and recovery design (R31)" in §6 Phase 4.** Rollback after writes resume is allowed only through reverse reconciliation plus the readiness gate, which refuses any MongoDB that lacks a PostgreSQL record. 10/10 tests on disposable databases. Production use needs a guarded CLI, a rehearsal and approval; until then the no-rollback rule applies once writes resume |
 | R32 | After a switch, `data:verify` reports MISMATCH by design (PostgreSQL gains new rows) | Low | Verified locally: all 47 copied records still match field for field; only additions appear as "unexpected". Use verify **before** each switch; afterwards, PostgreSQL is authoritative |
+| R33 | A Phase 4 smoke-test log printed the first 44 characters of a JWT issued by the **local** development server to the synthetic local test account `phase4-alice@example.com` | Low | **Investigated (2026-10-22): not a credential exposure.** The 44 characters were the fixed HS256 header (`{"alg":"HS256","typ":"JWT"}`, identical for every token) plus `.eyJpZCI` (`{"id"`). No user id, expiry or signature was printed, and the token cannot be rebuilt without `JWT_SECRET`. Neither `JWT_SECRET` nor the PostgreSQL password appears in any log, report, scratch file or git history (scanned). The account exists only in local PostgreSQL. No rotation needed. Prevention: the repository's tests and scripts print no tokens (checked); ad-hoc scripts must drop `token` before printing a response |
+| R34 | A reconciliation process that dies mid-run leaves its run lock in `reconciliation_runs` | Low | Intended: an overlapping run could race on product updates. The readiness gate reports "a reconciliation run is in progress". Remove the lock by hand once no run is active, then re-run (runs are idempotent) |
 
 ### Approved decisions (2026-10-21)
 
@@ -262,6 +264,24 @@ Recorded during Phase 2 and **not implemented in Phase 2**, because Phase 2 must
 - **FD1 — Cart quantity is an integer from 1 to 10.** Applies to POST (add), re-adding the same product (the merged total must stay ≤ 10) and PUT (update). Replaces today's gaps (fractional `1.5`, merges past 10, no PUT upper bound; R14). Postgres: `quantity integer NOT NULL CHECK (quantity BETWEEN 1 AND 10)`. Live data verified: 0 fractional quantities. Suggested timing: with D1 in Phase 4.4.
 - **FD2 — API errors are safe JSON.** Every error response is `{ "message": string }` with a fixed, non-internal message: no raw `error.message` (today cart/order/delivery 500s leak it, and so does R18), no HTML pages, no stack traces. This includes a JSON 404 for unknown routes, a JSON 400 for malformed bodies and a JSON 403 for disallowed CORS origins (R15). Details are logged server-side only. Supersedes the old step 2.5. Suggested timing: a dedicated commit before Phase 4, so every Postgres-backed domain inherits it.
 - **FD3 — Product edits keep search keywords unless explicitly updated.** `PUT /api/products/:id` stops replacing `keywords` with `[category]`. Keywords change only when the request includes them. Create keeps today's default (`[category]`) when none are sent (R16). Suggested timing: Phase 4.2 (products cut-over).
+
+### Auth hardening plan (R30): HttpOnly session cookie (planned, not implemented)
+
+**Today:** `POST /api/auth/login|register` returns a 30-day HS256 JWT in the body. The SPA keeps it in `localStorage` and sends `Authorization: Bearer`. CORS is an exact allow-list without credentials. The SPA (`*.vercel.app`) and the API (Render) are **different sites**: both suffixes are on the Public Suffix List.
+
+**Why not a cross-site cookie:** it would need `SameSite=None`. Safari and Firefox block such third-party cookies by default, and Chrome is restricting them, so sessions would fail for part of the audience. Rejected.
+
+**Design:**
+1. **Same-origin API.** The frontend host proxies `/api/*` to Render: a Vercel rewrite now (`vercel.json`), Next.js `rewrites` in Phase 5. That matches the Vite dev proxy already in use. The browser then sees one origin, so cookies are first-party and CORS is no longer involved for the app. Alternative: a custom domain (`app.` and `api.` on one registrable domain, `SameSite=Lax`, CORS with `credentials: true` for that exact origin only).
+2. **Server-side sessions** in PostgreSQL. A new `sessions` table stores a SHA-256 of a 256-bit random id, plus `user_id`, `created_at`, `last_seen_at`, `expires_at` and `revoked_at`. They are revocable, unlike the current JWTs, which stay valid until expiry even after logout. Sessions are not migrated by R31 reconciliation, so a rollback signs everyone out (acceptable).
+3. **Cookie:** `__Host-sid=<id>; HttpOnly; Secure; SameSite=Lax; Path=/`, with no `Domain`. Idle timeout 7 days, absolute lifetime 30 days. The `__Host-` prefix requires `Secure`; locally the name is `sid` over `http://localhost`.
+4. **CSRF:** `SameSite=Lax` blocks cross-site POST, PUT, PATCH and DELETE with the cookie. Defence in depth: every unsafe method, including login, must carry an `Origin` header on the allow-list (403 otherwise), and bodies must be `application/json` (form posts are rejected). No GET changes state, which is already true.
+5. **Login and logout:** login and register create a session and set the cookie, rotating any previous session (no session fixation). They stop returning the token in the body once the migration window closes. `POST /api/auth/logout` revokes the row and clears the cookie. Add "sign out everywhere", and revoke all of a user's sessions when the password changes.
+6. **Renewal:** sliding expiry. Extend `expires_at` at most once per hour of activity, never past the absolute lifetime. There are no refresh tokens and nothing for the SPA to store.
+7. **Frontend:** remove the `token` key, the bearer interceptor and the `storage`-event logic. Instead, use `withCredentials` only if the custom-domain alternative is chosen, sign-in state from `GET /api/auth/profile` (already a TanStack query), and `BroadcastChannel` for cross-tab sign-out. The 401 → login flow and `safeReturnPath` stay as they are.
+8. **Existing users:** a window of at most 30 days, the current JWT lifetime. The API accepts the session cookie first and a Bearer JWT as a fallback. On first load, a SPA holding a `localStorage` token calls `POST /api/auth/session` (Origin-checked) to exchange it for a cookie, then deletes the token. After the window: remove Bearer support and **rotate `JWT_SECRET`**, which invalidates any token still outstanding.
+9. **Tests before rollout:** cookie attributes; Origin and content-type rejection; logout revokes server-side; idle and absolute expiry; rotation on login; cross-user isolation; the exchange endpoint; the Bearer fallback window. Tests and logs must never print cookie or token values.
+
 
 ## 5. Repository layout recommendation
 
@@ -606,13 +626,89 @@ The frontend needs no setting. With the legacy MongoDB cart it behaves as before
 
 #### Remaining before any production cutover
 
-- [ ] Decisions: production MongoDB provider; Render Postgres instance (region, version 17, backups); write-freeze window; whether post-switch writes must survive a rollback (R31)
-- [ ] R29: approved frontend dependency update (`axios`, `react-router`)
+- [ ] Decisions: production MongoDB provider; Render Postgres instance (region, version 17, backups); write-freeze window and mechanism
+- [x] R29: frontend dependency update (`69a47e0`, `npm audit` 0)
+- [x] R31: recovery design and reconciliation proof of concept (below)
+- [ ] R31 production readiness: write-freeze switch, a guarded reconciliation CLI, a rehearsal on restored copies of production dumps, owner approval
+- [ ] R30: decide the auth cookie plan (§4); implement before or with Phase 5
 - [ ] Render settings from "Render deployment preparation" (§6 Phase 3) applied, then deploy `migration/postgres` with **all domains on MongoDB** first; verify; then switch production domains one at a time with `POSTGRES_PRODUCTION_ENABLED=true`, each right after a production `data:import` + `data:verify`
 - [ ] 4.6 Remove Mongoose only after two weeks of stable production on PostgreSQL and a final `mongodump`
 
 **Acceptance per domain (production):** suites green; `data:verify` MATCH immediately before the switch; smoke test of that domain's features; no 5xx increase for 48 h.
-**Rollback per domain:** unset `DATA_SOURCE_<DOMAIN>` and restart. MongoDB is untouched and authoritative for everything written before the switch; writes after it are not in MongoDB (R31).
+**Rollback per domain:** while writes are still frozen, unset `DATA_SOURCE_<DOMAIN>` and restart. After writes resume, only through the reconciliation procedure below (R31).
+
+#### Production cutover and recovery design (R31)
+
+**The problem.** Once PostgreSQL accepts writes, it holds records MongoDB has never seen: new users with password hashes, orders and order lines, status changes and their audit trail, per-user carts, and catalogue edits. Pointing the app back at MongoDB would serve an **older snapshot**. New customers could no longer sign in, their orders would disappear from their history and from the admin list, and paid orders would be invisible to fulfilment. Verified locally in Phase 4 E7 and again in the proof of concept.
+
+**Principle.** No rollback may silently discard an accepted write. MongoDB may become active again only after it is shown to contain every PostgreSQL record. If that cannot be shown, recovery is **forward-fix only**.
+
+##### Cutover runbook (per production switch; nothing here has been executed)
+
+1. **Prepare.** Owner approval; Render Postgres provisioned; migrations applied with `db:migrate` (not at startup); restore-verified `mongodump` and `pg_dump`; reconciliation CLI rehearsed against restored copies.
+2. **Freeze writes.** Turn on a maintenance mode that returns 503 for every non-GET `/api` request. This is a small backend change still to be built and tested; it is not implemented. Fallback: block writes at the edge. Confirm the freeze: the MongoDB fingerprint (`data:dry-run`) stays unchanged over several minutes.
+3. **Back up** both databases (§7) and verify each by restoring into a throwaway container.
+4. **Consistency checks.** `data:dry-run`: 0 errors; the documented warnings only (orphaned orders, excluded shared cart). Record the source fingerprint.
+5. **Migrate.** `data:import` (one transaction; refuses a source that changed since the dry run).
+6. **Verify.** `data:verify` MATCH, and the fingerprint is unchanged since step 4.
+7. **Activate, under control.** Set `DATA_SOURCE_*` for the approved domains and `POSTGRES_PRODUCTION_ENABLED=true`, then restart. Run read-only smoke checks **while still frozen**. Rollback at this point is the plain one, with no loss (PostgreSQL has received no writes).
+8. **Resume writes.** Lift the freeze and record the time: **from now on, rollback requires reconciliation.**
+
+##### Rollback after writes resumed (reverse reconciliation)
+
+1. Freeze writes again (step 2), then back up **both** databases.
+2. Dry run: `planReconciliation` (read-only on both sides) lists what would be copied and any blocking issue.
+3. Apply: `applyReconciliation`. It reads PostgreSQL in one `REPEATABLE READ` snapshot, writes MongoDB **insert-only and keyed by id**, then re-reads PostgreSQL. A changed fingerprint means writes were not frozen, and the run fails.
+4. Gate: `verifyRollbackTarget` must return `ready: true`. It requires every PostgreSQL user, order, product and delivery option to exist and match in MongoDB, the side collections to mirror PostgreSQL, no run in progress, and a completed run against PostgreSQL as it is now. **It never reports an older MongoDB as ready.** Switching `DATA_SOURCE_*` back is a manual step taken only after this check; nothing switches automatically.
+5. Before lifting the freeze, act on the warnings, for example by deleting by hand any product that was deleted on PostgreSQL.
+
+| What | How it is reconciled |
+| --- | --- |
+| New users | Inserted with the same ObjectId and the **same bcrypt hash**, written raw because the Mongoose save hook would hash it twice. Users keep their passwords. A different MongoDB user with the same email is a blocking conflict |
+| New orders and lines | Inserted with the same UUID, totals, customer details and **immutable product snapshots**, in the shape the MongoDB app writes. The MongoDB API then returns them identical to PostgreSQL apart from `status` |
+| Existing orders | **Compared, never modified.** Any difference in owner, customer, time, total or lines is a blocking conflict. Orders whose owner was deleted are compared without the owner, as imported (Phase 3B) |
+| Status and audit trail | Copied to `reconciliation_order_status`. MongoDB has no status model (status changes return 501 there), so history is preserved but not served |
+| Per-user carts | Copied to `reconciliation_carts`; **never merged into the shared cart** (D1). Customers lose cart contents on rollback; orders are not affected |
+| Catalogue edits | A newer PostgreSQL product replaces the MongoDB one only after the old version is archived in `reconciliation_previous_products`. New products are inserted |
+| Products deleted on PostgreSQL | Reported (warning), **not** deleted from MongoDB. Manual decision |
+| Inventory tracking | Not representable in MongoDB (warning; 0 products today) |
+| Records only in MongoDB | Blocking: they mean MongoDB was written after the cutover. Manual resolution |
+
+**Proof of concept** (`ecommerce-backend/db/reconciliation/reverse.ts`, `test/db/reconciliation.test.ts`). It runs only against disposable databases: an in-memory MongoDB and a fresh database in the throwaway PostgreSQL container. There is deliberately **no npm script**. Post-cutover traffic goes through the real PostgreSQL-backed API: 2 registrations, cart lines, a checkout, admin status changes on a new order and a legacy order, and a product edit, create and delete. Results are checked through the real MongoDB-backed API. **10/10 tests:**
+- Without reconciliation, the new user gets 401 and the readiness gate refuses the older MongoDB.
+- Planning writes nothing on either side.
+- After reconciliation, new users log in with their passwords, the new order matches PostgreSQL apart from `status`, existing orders are byte-identical, status history and carts are archived, the shared cart is unchanged, catalogue edits are applied with the old version archived, and the deleted product is reported.
+- Re-running is a no-op: same `dbHash`, no duplicates.
+- An interrupted run (failure before orders) is not ready; resuming completes it without duplicates.
+- A changed MongoDB order blocks everything, writes nothing and is never modified.
+- A duplicate email blocks.
+- A write to PostgreSQL during the run is detected ("not frozen"), and the gate stays closed until a clean re-run.
+- A completed run goes stale after any new PostgreSQL write.
+- Overlapping runs: the second is refused (lock); nothing is duplicated.
+
+Mutation checks:
+- Removing the freeze re-check, the gate's missing-record rule, the order total comparison or the lock each fails at least one test.
+- Replacing the idempotent insert with a plain insert still passes. Duplicates are prevented structurally, because MongoDB `_id` is unique and every run re-plans from the current state; the upsert only keeps overlapping runs from failing, which the lock now prevents anyway.
+
+**Not covered by the proof of concept:**
+- Production-scale reads: whole tables are loaded into memory, which is fine for today's data and needs batching later.
+- Product-image files.
+- A re-cutover after a rollback, which needs its own plan. The PostgreSQL database is kept, never dropped, so that plan has the full history to work from.
+
+##### No-rollback condition and forward-fix plan
+
+After writes resume, **rolling back to MongoDB is not allowed** whenever any of these is true:
+- the reconciliation CLI is not built, rehearsed and approved;
+- reconciliation reports blocking conflicts;
+- the readiness gate is not `ready`;
+- Mongoose has been removed (4.6).
+
+In those cases recovery is forward-fix on PostgreSQL:
+- Redeploy the previous commit with the **same** `DATA_SOURCE_*` settings for code regressions.
+- Ship a targeted fix behind the existing tests.
+- For data damage: `pg_restore` from the latest dump into a new database, or Render point-in-time recovery if the plan includes it, then switch `DATABASE_URL`.
+- Keep the write freeze on while recovering if integrity is in doubt.
+- MongoDB stays untouched as the archive of everything before the cutover.
 
 
 ### Phase 5 — Next.js frontend in `apps/web` (Vite stays live)
@@ -725,7 +821,8 @@ Backups go **outside** the repo (`../ecommerce-backups/`) so they can never be c
 | --- | --- |
 | Lost or broken WIP | `git switch backup/wip-ts-postgres-2026-10-21` |
 | Broken production after any deploy | Redeploy previous commit; worst case redeploy tag `pre-pg-migration` |
-| A Postgres-backed domain misbehaves | `DATA_SOURCE_<DOMAIN>=mongo`, restart API |
+| A Postgres-backed domain misbehaves, writes still frozen | `DATA_SOURCE_<DOMAIN>=mongo`, restart API |
+| A Postgres-backed domain misbehaves after writes resumed | Freeze writes → back up both → reverse reconciliation → `verifyRollbackTarget` ready → then switch. Not ready → forward-fix only (§6 Phase 4, R31) |
 | Postgres data corrupted | `pg_restore` latest dump, or drop schema → `db:migrate` → ETL |
 | MongoDB data corrupted | `mongorestore` from §7 dump (into a fresh DB first, then swap `MONGODB_URI`) |
 | Next.js frontend regressions | Re-point domain to Vite Vercel project |
@@ -736,9 +833,10 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-Pushed to `origin/migration/postgres`: everything up to Phase 3C (`9d83480`). Committed locally, **not yet pushed**: `d6d1b87` (frontend Vite 6.4.4 + test tooling), `cb43f1b` (frontend login flow and per-user cart compatibility), and the Phase 4 plan update. **Phase 4 is complete locally; production cutover has not started.**
+Pushed to `origin/migration/postgres`: everything through Phase 4 (local, `4b1131e`) and the frontend security update (`69a47e0`). This stage also commits the R31 proof of concept and this plan update. **Production cutover has not started; nothing was deployed.**
 
-1. Owner: review and approve pushing the local commits.
-2. Owner: decide R29 (frontend dependency update) and R31 (rollback policy for post-switch writes).
-3. Owner: production prerequisites. Production MongoDB provider, Render Postgres instance, write-freeze window. Then apply the documented Render settings and deploy with all domains on MongoDB.
-4. Production switching, one domain at a time, only with explicit approval.
+1. Owner: review and decide the R30 auth cookie plan (§4), preferably before Phase 5 starts.
+2. Owner: accept the R31 recovery design, including the no-rollback rule once writes resume without an approved reconciliation tool.
+3. Before any production switch: build the write-freeze mode and a production-guarded reconciliation CLI (dry-run first, `--confirm`, local-only unless explicitly allowed), then rehearse on restored copies of production dumps.
+4. Owner: production prerequisites. Production MongoDB provider, Render Postgres instance, freeze window. Then apply the documented Render settings and deploy with all domains on MongoDB.
+5. Phase 5 (Next.js) only with explicit approval.
