@@ -48,6 +48,9 @@ export interface ProductDetails {
   keywords: string[];
 }
 
+/** An admin edit. Without keywords the stored search keywords are kept (Phase 5G). */
+export type ProductChanges = Omit<ProductDetails, "keywords"> & { keywords?: string[] };
+
 /** The authenticated user attached to req.user (password never included). */
 export interface AuthUser {
   id: string;
@@ -102,7 +105,7 @@ export interface ProductRepository {
   list(): Promise<ProductRecord[]>;
   findById(id: string): Promise<ProductRecord | null>;
   create(details: ProductDetails): Promise<ProductRecord>;
-  update(id: string, details: ProductDetails): Promise<ProductRecord | null>;
+  update(id: string, details: ProductChanges): Promise<ProductRecord | null>;
   delete(id: string): Promise<{ id: string } | null>;
 }
 
@@ -134,6 +137,16 @@ export interface OrderRepository {
   get(orderId: string, viewer: Viewer, expandProducts: boolean): Promise<unknown>;
   checkout(owner: CartOwner, user: AuthUser, customer: CustomerDetails, idempotencyKey?: string): Promise<CheckoutResult>;
   changeStatus(orderId: string, status: OrderStatus, actor: AuthUser, reason: string): Promise<StatusChangeResult>;
+  /** The append-only status audit trail, oldest first; null for an unknown order. */
+  statusEvents(orderId: string): Promise<OrderStatusEvent[] | null | "unsupported">;
+}
+
+export interface OrderStatusEvent {
+  fromStatus: OrderStatus | null;
+  toStatus: OrderStatus;
+  reason: string;
+  changedAt: Date;
+  changedBy: { id: string; name: string };
 }
 
 export interface Repositories {

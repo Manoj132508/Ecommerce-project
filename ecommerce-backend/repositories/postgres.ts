@@ -21,6 +21,8 @@ import {
   type DeliveryOptionRepository,
   type OrderRepository,
   type OrderStatus,
+  type OrderStatusEvent,
+  type ProductChanges,
   type ProductDetails,
   type ProductRecord,
   type ProductRepository,
@@ -114,7 +116,7 @@ const toProduct = (row: ProductRow): ProductRecord => ({
   id: row.id,
 });
 
-const productParameters = (details: ProductDetails) => [
+const productParameters = (details: Omit<ProductDetails, "keywords"> & { keywords: string[] | null }) => [
   details.image, details.name, details.description, details.howItWorks, details.highlights,
   details.careInstructions, details.category, details.stock, details.priceCents, details.keywords,
 ];
@@ -161,16 +163,18 @@ export class PostgresProductRepository implements ProductRepository {
     }
   }
 
-  async update(id: string, details: ProductDetails) {
+  async update(id: string, details: ProductChanges) {
     if (!isProductId(id)) return null;
     try {
+      // NULL keywords (not sent) keep the stored search keywords.
       const { rows: [row] } = await this.pool.query<ProductRow>(
         `UPDATE products
             SET image = $2, name = $3, description = $4, how_it_works = $5, highlights = $6,
-                care_instructions = $7, category = $8, stock = $9, price_cents = $10, keywords = $11
+                care_instructions = $7, category = $8, stock = $9, price_cents = $10,
+                keywords = COALESCE($11, keywords)
           WHERE id = $1
           RETURNING ${PRODUCT_COLUMNS}`,
-        [id, ...productParameters(details)],
+        [id, ...productParameters({ ...details, keywords: details.keywords ?? null })],
       );
       return row ? toProduct(row) : null;
     } catch (error) {
@@ -672,6 +676,22 @@ export class PostgresOrderRepository implements OrderRepository {
       }
       throw error;
     }
+  }
+
+  async statusEvents(orderId: string): Promise<OrderStatusEvent[] | null> {
+    if (!isOrderId(orderId)) return null;
+    const { rows: [order] } = await this.pool.query("SELECT 1 FROM orders WHERE id = $1", [orderId]);
+    if (!order) return null;
+    const { rows } = await this.pool.query<{ from_status: OrderStatus | null; to_status: OrderStatus; reason: string; changed_at: Date; changed_by: string; name: string }>(
+      `SELECT e.from_status, e.to_status, e.reason, e.changed_at, e.changed_by, u.name
+         FROM order_status_events e JOIN users u ON u.id = e.changed_by
+        WHERE e.order_id = $1 ORDER BY e.id`,
+      [orderId],
+    );
+    return rows.map((row) => ({
+      fromStatus: row.from_status, toStatus: row.to_status, reason: row.reason, changedAt: row.changed_at,
+      changedBy: { id: row.changed_by, name: row.name },
+    }));
   }
 
   async changeStatus(orderId: string, status: OrderStatus, actor: AuthUser, reason: string): Promise<StatusChangeResult> {

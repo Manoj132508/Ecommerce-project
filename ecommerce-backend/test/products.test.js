@@ -135,7 +135,6 @@ describe("POST /api/products", () => {
       // Client-supplied server-owned fields are ignored.
       id: "attacker-chosen-id",
       rating: { stars: 5, count: 9999 },
-      keywords: ["spam"],
     });
 
     expect(response.status).toBe(201);
@@ -157,6 +156,14 @@ describe("POST /api/products", () => {
 
     const listed = (await api().get("/api/products")).body;
     expect(listed).toEqual([response.body]);
+  });
+
+  test("Phase 5G: admin-supplied search keywords are kept (trimmed, lower-case, unique) and validated", async () => {
+    const { token } = await createAdmin();
+    const response = await api().post("/api/products").set(bearer(token)).send({ ...validForm, keywords: " Kettle, Tea ,kettle" });
+    expect(response.status).toBe(201);
+    expect(response.body.keywords).toEqual(["kettle", "tea"]);
+    expect((await api().post("/api/products").set(bearer(token)).send({ ...validForm, keywords: [{ $ne: null }] })).status).toBe(400);
   });
 
   test("accepts highlights as an array and numeric price/stock", async () => {
@@ -210,7 +217,7 @@ describe("PUT /api/products/:productId", () => {
     expect(response.body).toEqual({ message: "Product not found" });
   });
 
-  test("replaces editable fields, keeps id/rating/createdAt, and regenerates keywords", async () => {
+  test("replaces editable fields, keeps id/rating/createdAt, and keeps search keywords that were not sent", async () => {
     const { token } = await createAdmin();
     const before = (await api().get("/api/products")).body[0];
     const response = await api().put(`/api/products/${PRODUCTS.socks._id}`).set(bearer(token)).send(validForm);
@@ -224,11 +231,15 @@ describe("PUT /api/products/:productId", () => {
       stock: 12,
       rating: PRODUCTS.socks.rating,
       createdAt: before.createdAt,
-      // Original keywords ["socks","sports","apparel"] are replaced.
-      keywords: ["kitchen"],
+      // Phase 5G: the form sends no keywords, so the curated ones stay (they were
+      // regenerated from the category before, which lost them on every edit).
+      keywords: before.keywords,
     });
     expect(response.body.updatedAt > before.updatedAt).toBe(true);
     expect((await api().get("/api/products")).body[0]).toEqual(response.body);
+
+    const withKeywords = await api().put(`/api/products/${PRODUCTS.socks._id}`).set(bearer(token)).send({ ...validForm, keywords: "kettle" });
+    expect(withKeywords.body.keywords).toEqual(["kettle"]);
   });
 });
 

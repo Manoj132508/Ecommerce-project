@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import type { DeliveryOptionRepository, ProductDetails, ProductRepository } from "../repositories/types.js";
+import type { DeliveryOptionRepository, ProductChanges, ProductRepository } from "../repositories/types.js";
 import type { DeleteProductResponse, ErrorResponse } from "../types/api.js";
 import { errorMessage, errorName } from "../utils/errors.js";
 import { isProductId } from "../utils/identifiers.js";
@@ -20,9 +20,27 @@ interface ProductFormBody {
   price?: unknown;
   stock?: unknown;
   highlights?: unknown;
+  /** Optional search keywords (array or comma-separated). Not sent by the Vite form. */
+  keywords?: unknown;
 }
 
-const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | null => {
+const MAX_KEYWORDS = 20;
+const MAX_KEYWORD_LENGTH = 40;
+
+/**
+ * undefined: not sent (create uses the category, update keeps the stored
+ * keywords); null: invalid; otherwise trimmed, lower-case, unique keywords.
+ */
+const parseKeywords = (value: unknown): string[] | null | undefined => {
+  if (value === undefined) return undefined;
+  const items: unknown[] = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [null];
+  if (!items.every((item): item is string => typeof item === "string")) return null;
+  const keywords = [...new Set(items.map((item) => item.trim().toLowerCase()).filter(Boolean))];
+  if (keywords.length > MAX_KEYWORDS || keywords.some((keyword) => keyword.length > MAX_KEYWORD_LENGTH)) return null;
+  return keywords;
+};
+
+const getProductDetails = (body: ProductFormBody | undefined): ProductChanges | null => {
   const {
     name,
     description,
@@ -39,6 +57,7 @@ const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | 
     : typeof rawHighlights === "string"
       ? rawHighlights.split(",")
       : [];
+  const keywords = parseKeywords(body?.keywords);
   const normalizedHighlights = highlights
     .filter((highlight): highlight is string => typeof highlight === "string")
     .map((highlight) => highlight.trim())
@@ -53,7 +72,8 @@ const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | 
     typeof image !== "string" || !image.trim() ||
     typeof category !== "string" || !category.trim() ||
     !Number.isFinite(price) || price < 0 ||
-    !Number.isInteger(stock) || stock < 0
+    !Number.isInteger(stock) || stock < 0 ||
+    keywords === null
   ) {
     return null;
   }
@@ -68,7 +88,7 @@ const getProductDetails = (body: ProductFormBody | undefined): ProductDetails | 
     category: category.trim(),
     stock,
     priceCents: Math.round(price * 100),
-    keywords: [category.trim().toLowerCase()]
+    ...(keywords ? { keywords } : {})
   };
 };
 
@@ -91,7 +111,11 @@ export function createProductController(products: ProductRepository, deliveryOpt
         return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);
       }
 
-      return res.status(201).json(await products.create(productDetails));
+      // Without keywords a new product is found by its category, as before.
+      return res.status(201).json(await products.create({
+        ...productDetails,
+        keywords: productDetails.keywords?.length ? productDetails.keywords : [productDetails.category.toLowerCase()]
+      }));
     } catch (error) {
       if (errorName(error) === "ValidationError") {
         return res.status(400).json({ message: "Please provide valid product details" } satisfies ErrorResponse);

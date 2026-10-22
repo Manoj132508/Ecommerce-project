@@ -5,7 +5,7 @@ import type { Repositories } from "../repositories/types.js";
 import { privateNoStore } from "../middleware/privateCache.js";
 
 export default function orderRoutes(repositories: Repositories, protect: RequestHandler) {
-  const { createOrder, getOrder, getOrders, updateOrderStatus } = createOrderController(repositories.orders, repositories.carts);
+  const { createOrder, getOrder, getOrders, getOrderStatusEvents, updateOrderStatus } = createOrderController(repositories.orders, repositories.carts);
   const router = express.Router();
 
   router.use(privateNoStore);
@@ -16,6 +16,7 @@ export default function orderRoutes(repositories: Repositories, protect: Request
 
   router.get("/orders/:orderId", protect, getOrder);
   router.patch("/orders/:orderId/status", protect, adminOnly, updateOrderStatus);
+  router.get("/orders/:orderId/status-events", protect, adminOnly, getOrderStatusEvents);
 
   return router;
 }

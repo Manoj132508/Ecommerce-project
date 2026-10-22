@@ -19,6 +19,7 @@ import type {
   DeliveryOptionRecord,
   DeliveryOptionRepository,
   OrderRepository,
+  ProductChanges,
   ProductDetails,
   ProductRecord,
   ProductRepository,
@@ -77,8 +78,10 @@ export class MongoProductRepository implements ProductRepository {
     return Product.create({ ...details, rating: { stars: 0, count: 0 } });
   }
 
-  async update(id: string, details: ProductDetails): Promise<ProductRecord | null> {
-    return Product.findByIdAndUpdate(id, details, { new: true, runValidators: true });
+  async update(id: string, details: ProductChanges): Promise<ProductRecord | null> {
+    // Without keywords the stored search keywords are kept.
+    const { keywords, ...rest } = details;
+    return Product.findByIdAndUpdate(id, keywords ? details : rest, { new: true, runValidators: true });
   }
 
   async delete(id: string) {
@@ -283,5 +286,9 @@ export class MongoOrderRepository implements OrderRepository {
   async changeStatus(): Promise<StatusChangeResult> {
     // Legacy MongoDB orders have no status model.
     return { kind: "unsupported" };
+  }
+
+  async statusEvents(): Promise<"unsupported"> {
+    return "unsupported";
   }
 }

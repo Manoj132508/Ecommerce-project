@@ -129,6 +129,38 @@ describe("products and delivery options", () => {
     expect((await app().delete(`/api/products/${created.body.id}`).set(auth(ADMIN_ID))).status).toBe(404);
   });
 
+  test("search keywords: kept when an edit does not send them, replaced or set when it does, validated", async () => {
+    const form = {
+      name: "Socks", price: "10.90", description: "Comfortable socks.", howItWorks: "Wear them.", highlights: "Cotton",
+      careInstructions: "Machine wash.", image: "images/products/socks.jpg", category: "Clothing", stock: "0",
+    };
+    // The Vite form never sends keywords: an edit must not wipe the curated ones.
+    const kept = await app().put(`/api/products/${SOCKS}`).set(auth(ADMIN_ID)).send(form);
+    expect(kept.body.keywords).toEqual(["socks", "sports"]);
+
+    const replaced = await app().put(`/api/products/${SOCKS}`).set(auth(ADMIN_ID)).send({ ...form, keywords: " Socks, Running ,socks," });
+    expect(replaced.body.keywords).toEqual(["socks", "running"]);
+    const asArray = await app().put(`/api/products/${SOCKS}`).set(auth(ADMIN_ID)).send({ ...form, keywords: ["Gym"] });
+    expect(asArray.body.keywords).toEqual(["gym"]);
+
+    for (const keywords of [42, [1], { $ne: null }, "x".repeat(41), Array.from({ length: 21 }, (_, index) => `k${index}`)]) {
+      const refused = await app().put(`/api/products/${SOCKS}`).set(auth(ADMIN_ID)).send({ ...form, keywords });
+      expect(refused.status).toBe(400);
+    }
+    expect((await sql("SELECT keywords FROM products WHERE id = $1", [SOCKS])).rows[0]).toEqual({ keywords: ["gym"] });
+
+    const created = await app().post("/api/products").set(auth(ADMIN_ID)).send({ ...form, name: "Trainer socks", keywords: "trainers, socks" });
+    expect(created.body.keywords).toEqual(["trainers", "socks"]);
+    const fallback = await app().post("/api/products").set(auth(ADMIN_ID)).send({ ...form, name: "Plain socks", keywords: "" });
+    expect(fallback.body.keywords).toEqual(["clothing"]);
+  });
+
+  test("admin product writes are private and never cacheable", async () => {
+    const response = await app().delete(`/api/products/${SHIRT}`).set(auth(ADMIN_ID));
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store, max-age=0");
+  });
+
   test("GET /api/delivery-options with and without estimated times", async () => {
     const plain = await app().get("/api/delivery-options");
     expect(plain.body).toEqual([
@@ -517,6 +549,24 @@ describe("order history and ownership", () => {
     expect(all.map((order: { id: string }) => order.id)).toEqual([aliceOrder.id, LEGACY_ORDER]);
   });
 
+  test("scope=own limits an admin to their own orders (customer page); the default stays all orders", async () => {
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const { body: aliceOrder } = await checkout(ALICE_ID);
+    await addToCart(ADMIN_ID, BALL, 1);
+    const { body: adminOrder } = await checkout(ADMIN_ID);
+
+    const own = (await app().get("/api/orders?scope=own").set(auth(ADMIN_ID))).body;
+    expect(own.map((order: { id: string }) => order.id)).toEqual([adminOrder.id]);
+    const all = (await app().get("/api/orders").set(auth(ADMIN_ID))).body;
+    expect(all.map((order: { id: string }) => order.id).sort()).toEqual([adminOrder.id, aliceOrder.id, LEGACY_ORDER].sort());
+    expect((await app().get("/api/orders?scope=own").set(auth(ALICE_ID))).body.map((order: { id: string }) => order.id)).toEqual([aliceOrder.id]);
+    expect((await app().get(`/api/orders/${aliceOrder.id}?scope=own`).set(auth(ADMIN_ID))).status).toBe(404);
+    expect((await app().get(`/api/orders/${aliceOrder.id}`).set(auth(ADMIN_ID))).status).toBe(200);
+    expect((await app().get(`/api/orders/${adminOrder.id}?scope=own`).set(auth(ADMIN_ID))).status).toBe(200);
+    // A customer cannot widen the scope.
+    expect((await app().get("/api/orders?scope=all").set(auth(ALICE_ID))).body.map((order: { id: string }) => order.id)).toEqual([aliceOrder.id]);
+  });
+
   test("legacy orders keep their original shape; expand adds the current product or null", async () => {
     const plain = await app().get(`/api/orders/${LEGACY_ORDER}`).set(auth(ADMIN_ID));
     expect(plain.body).toEqual({
@@ -581,6 +631,32 @@ describe("order status (admin, audited)", () => {
     expect(closed.status).toBe(200);
     expect(closed.body.status).toBe("delivered");
     expect((await sql("SELECT from_status, to_status FROM order_status_events")).rows).toEqual([{ from_status: null, to_status: "delivered" }]);
+  });
+
+  test("the audit trail is readable by admins only, oldest first, with who and why", async () => {
+    await addToCart(ALICE_ID, SOCKS, 1);
+    const { body: order } = await checkout(ALICE_ID);
+    await setStatus(order.id, { status: "processing", reason: "  picked  " });
+    const history = (path: string, userId?: string) => {
+      const pending = app().get(path);
+      return userId ? pending.set(auth(userId)) : pending;
+    };
+
+    const events = await history(`/api/orders/${order.id}/status-events`, ADMIN_ID);
+    expect(events.status).toBe(200);
+    expect(events.headers["cache-control"]).toBe("private, no-store, max-age=0");
+    expect(events.body).toEqual([
+      { fromStatus: null, toStatus: "placed", reason: "order placed", changedAt: expect.any(String), changedBy: { id: ALICE_ID, name: "Alice" } },
+      { fromStatus: "placed", toStatus: "processing", reason: "picked", changedAt: expect.any(String), changedBy: { id: ADMIN_ID, name: "Admin" } },
+    ]);
+    expect((await history(`/api/orders/${order.id}/status-events`)).status).toBe(401);
+    expect((await history(`/api/orders/${order.id}/status-events`, ALICE_ID)).status).toBe(403);
+    expect((await history(`/api/orders/${UNKNOWN_UUID}/status-events`, ADMIN_ID)).status).toBe(404);
+    expect((await history("/api/orders/not-a-uuid/status-events", ADMIN_ID)).status).toBe(400);
+    expect((await history(`/api/orders/${LEGACY_ORDER}/status-events`, ADMIN_ID)).body).toEqual([]);
+    // Append-only: the history cannot be rewritten, even directly in the database.
+    await expect(sql("UPDATE order_status_events SET reason = 'edited'")).rejects.toThrow(/append-only/);
+    await expect(sql("DELETE FROM order_status_events")).rejects.toThrow(/append-only/);
   });
 
   test("rejects non-admins, invalid statuses, missing reasons, unknown and malformed ids", async () => {

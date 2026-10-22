@@ -28,7 +28,10 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
   const getOrders: RequestHandler<NoParams> = async (req, res) => {
     try {
       const user = requireUser(req);
-      return res.json(await orders.list({ id: user.id, isAdmin: user.isAdmin }, req.query.expand === "products"));
+      // ?scope=own: only the signed-in user's orders, also for an admin (the
+      // customer "Your orders" page). Without it an admin lists every order.
+      const isAdmin = user.isAdmin && req.query.scope !== "own";
+      return res.json(await orders.list({ id: user.id, isAdmin }, req.query.expand === "products"));
     } catch (error) {
       console.error("Order list failed:", errorMessage(error));
       return res.status(500).json({ message: "Unable to load orders" } satisfies ErrorResponse);
@@ -44,7 +47,9 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
         return res.status(400).json(invalidOrderId);
       }
 
-      const order = await orders.get(req.params.orderId, { id: user.id, isAdmin: user.isAdmin }, req.query.expand === "products");
+      // ?scope=own: the customer pages, where an admin sees only their own orders too.
+      const isAdmin = user.isAdmin && req.query.scope !== "own";
+      const order = await orders.get(req.params.orderId, { id: user.id, isAdmin }, req.query.expand === "products");
 
       if (!order) {
         return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
@@ -160,5 +165,27 @@ export function createOrderController(orders: OrderRepository, carts: CartReposi
     }
   };
 
-  return { getOrders, getOrder, createOrder, updateOrderStatus };
+  // GET /api/orders/:orderId/status-events (admin). The append-only audit trail.
+  const getOrderStatusEvents: RequestHandler<OrderParams> = async (req, res) => {
+    try {
+      if (!isOrderId(req.params.orderId)) {
+        return res.status(400).json(invalidOrderId);
+      }
+      const events = await orders.statusEvents(req.params.orderId);
+      if (events === "unsupported") {
+        return res.status(501).json({
+          message: "Order status history needs the PostgreSQL order store (DATA_SOURCE_ORDERS=postgres)"
+        } satisfies ErrorResponse);
+      }
+      if (!events) {
+        return res.status(404).json({ message: "Order not found" } satisfies ErrorResponse);
+      }
+      return res.json(events);
+    } catch (error) {
+      console.error("Order status history failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to load the order history" } satisfies ErrorResponse);
+    }
+  };
+
+  return { getOrders, getOrder, createOrder, updateOrderStatus, getOrderStatusEvents };
 }
