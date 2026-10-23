@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import type { Page, TestInfo } from "@playwright/test";
 import {
   expect, expectNoHorizontalScroll, isCompact, newCustomer, placeOrderThroughApi, PRODUCTS, settle, signInAsAdmin, signInThroughApi, snapshot, test,
 } from "./support";
@@ -8,45 +9,52 @@ import {
 const AXE_PROJECTS = ["chromium-desktop", "chromium-mobile", "firefox-desktop", "webkit-mobile"];
 
 test.describe("accessibility and layout", () => {
-  test("public and private pages: axe finds no serious or critical WCAG A/AA problems; no sideways scrolling", async ({ page }, testInfo) => {
-    test.skip(!AXE_PROJECTS.includes(testInfo.project.name), "axe runs on one engine per layout family");
-    const customer = newCustomer("Axe");
-    const pages: [string, string][] = [
-      ["home", "/"], ["search", "/products?q=sun"], ["product", `/products/${PRODUCTS.shoes.id}`],
-      ["sign-in", "/login"], ["register", "/register"], ["not-found", "/no-such-page"],
-    ];
+  /**
+   * Scans each page with axe and checks it does not scroll sideways; fails on
+   * serious or critical violations. Per-page scan times are recorded: each axe
+   * call costs about 2 s in Firefox whatever the page (MIGRATION_PLAN.md 6B),
+   * so public and signed-in pages are separate tests.
+   */
+  const scanPages = async (page: Page, testInfo: TestInfo, pages: readonly (readonly [string, string])[]) => {
     const report: Record<string, { id: string; impact: string | null | undefined; help: string; nodes: string[] }[]> = {};
-    const scan = async (name: string) => {
-      const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-      report[name] = result.violations.map((violation) => ({
-        id: violation.id, impact: violation.impact, help: violation.help, nodes: violation.nodes.slice(0, 5).map((node) => node.target.join(" ")),
-      }));
-    };
+    const timings: string[] = [];
     for (const [name, path] of pages) {
       await page.goto(path);
       await settle(page);
-      await scan(name);
+      const started = Date.now();
+      const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+      timings.push(`${name} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      report[name] = result.violations.map((violation) => ({
+        id: violation.id, impact: violation.impact, help: violation.help, nodes: violation.nodes.slice(0, 5).map((node) => node.target.join(" ")),
+      }));
       await expectNoHorizontalScroll(page);
     }
-
-    const csrf = await signInThroughApi(page.request, customer);
-    const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, customer);
-    await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
-    for (const [name, path] of [
-      ["cart", "/cart"], ["checkout", "/checkout"], ["orders", "/orders"], ["order", `/orders/${orderId}`],
-      ["tracking", `/tracking?orderId=${orderId}&productId=${PRODUCTS.sunhat.id}`], ["account", "/account"],
-    ] as const) {
-      await page.goto(path);
-      await settle(page);
-      await scan(name);
-      await expectNoHorizontalScroll(page);
-    }
-
+    testInfo.annotations.push({ type: "axe scan time", description: timings.join(", ") });
     await testInfo.attach("axe-violations.json", { body: JSON.stringify(report, null, 2), contentType: "application/json" });
     const blocking = Object.entries(report).flatMap(([name, violations]) => violations
       .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
       .map((violation) => `${name}: ${violation.id} (${violation.impact}) ${violation.nodes.join(", ")}`));
     expect(blocking).toEqual([]);
+  };
+
+  test("public pages: axe finds no serious or critical WCAG A/AA problems; no sideways scrolling", async ({ page }, testInfo) => {
+    test.skip(!AXE_PROJECTS.includes(testInfo.project.name), "axe runs on one engine per layout family");
+    await scanPages(page, testInfo, [
+      ["home", "/"], ["listing", "/products?sort=price-asc"], ["search", "/products?q=sun"], ["product", `/products/${PRODUCTS.shoes.id}`],
+      ["sign-in", "/login"], ["register", "/register"], ["not-found", "/no-such-page"],
+    ]);
+  });
+
+  test("signed-in pages: axe finds no serious or critical WCAG A/AA problems; no sideways scrolling", async ({ page }, testInfo) => {
+    test.skip(!AXE_PROJECTS.includes(testInfo.project.name), "axe runs on one engine per layout family");
+    const customer = newCustomer("Axe");
+    const csrf = await signInThroughApi(page.request, customer);
+    const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, customer);
+    await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
+    await scanPages(page, testInfo, [
+      ["cart", "/cart"], ["checkout", "/checkout"], ["orders", "/orders"], ["order", `/orders/${orderId}`],
+      ["tracking", `/tracking?orderId=${orderId}&productId=${PRODUCTS.sunhat.id}`], ["account", "/account"],
+    ]);
   });
 
   test("representative screenshots for the visual review", async ({ page }, testInfo) => {
@@ -59,6 +67,12 @@ test.describe("accessibility and layout", () => {
     await page.goto("/products?q=sun&category=Accessories");
     await settle(page);
     await snapshot(page, project, "01b-search");
+    await page.goto("/products?sort=price-desc");
+    await settle(page);
+    await snapshot(page, project, "01c-listing-sorted");
+    await page.goto(`/products/${PRODUCTS.sunglasses.id}`);
+    await settle(page);
+    await snapshot(page, project, "02b-product-details");
     await page.goto("/login");
     await settle(page);
     await snapshot(page, project, "09-sign-in");
@@ -79,7 +93,7 @@ test.describe("accessibility and layout", () => {
     // 375 and 768 are the small-phone and tablet widths of the Phase 6 layout review.
     for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }, { width: 375, height: 667 }, { width: 768, height: 1024 }]) {
       await page.setViewportSize(viewport);
-      for (const path of ["/", `/products/${PRODUCTS.shoes.id}`, "/cart", "/checkout", "/orders", "/account"]) {
+      for (const path of ["/", "/products?sort=name-asc", `/products/${PRODUCTS.sunglasses.id}`, "/cart", "/checkout", "/orders", "/account"]) {
         await page.goto(path);
         await settle(page);
         await expectNoHorizontalScroll(page);
@@ -141,7 +155,7 @@ test.describe("accessibility and layout", () => {
   test("Windows high contrast (forced colours): every button and field keeps a visible border (Chromium)", async ({ page, browserName }, testInfo) => {
     test.skip(browserName !== "chromium", "forced-colours emulation is Chromium-only");
     await page.emulateMedia({ forcedColors: "active" });
-    for (const [name, path] of [["home", "/"], ["product", `/products/${PRODUCTS.shoes.id}`], ["sign-in", "/login"], ["register", "/register"]] as const) {
+    for (const [name, path] of [["home", "/"], ["listing", "/products"], ["product", `/products/${PRODUCTS.shoes.id}`], ["sign-in", "/login"], ["register", "/register"]] as const) {
       await page.goto(path);
       await settle(page);
       const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input, select, textarea")]
@@ -149,6 +163,26 @@ test.describe("accessibility and layout", () => {
         .map((element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? element.tagName));
       expect(borderless, `${name}: controls without a border in forced colours`).toEqual([]);
       await snapshot(page, testInfo.project.name, `31-forced-colors-${name}`);
+    }
+  });
+
+  test("layout stability of the listing and product pages (Chromium only: layout-shift entries)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium", "the Layout Instability API is Chromium-only");
+    await page.addInitScript(() => {
+      (window as unknown as { __cls: number }).__cls = 0;
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) {
+          if (!entry.hadRecentInput) (window as unknown as { __cls: number }).__cls += entry.value;
+        }
+      }).observe({ type: "layout-shift", buffered: true });
+    });
+    for (const path of ["/products?sort=price-asc", `/products/${PRODUCTS.sunglasses.id}`]) {
+      await page.goto(path);
+      await settle(page);
+      await page.waitForTimeout(500);
+      const cls = await page.evaluate(() => (window as unknown as { __cls: number }).__cls);
+      testInfo.annotations.push({ type: "measured", description: `${testInfo.project.name} ${path}: CLS ${cls.toFixed(4)} (local next start)` });
+      expect(cls, path).toBeLessThan(0.1);
     }
   });
 

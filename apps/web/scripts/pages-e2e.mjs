@@ -82,6 +82,11 @@ async function main() {
 
 const titleOf = (html) => /<title>([^<]*)<\/title>/.exec(html)?.[1] ?? "";
 const names = (html) => NAMES.filter((name) => html.includes(`>${name}<`));
+/** The names if their first appearances in the HTML follow this order (all present), else null. */
+const inOrder = (html, expected) => {
+  const positions = expected.map((name) => html.indexOf(`>${name}<`));
+  return positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])) ? expected : null;
+};
 
 async function imageChecks(origin, label) {
   const [, , file] = PRODUCTS[2];
@@ -96,10 +101,35 @@ async function imageChecks(origin, label) {
 
 async function productionChecks(origin, pool) {
   const home = await request(`${origin}/`);
-  check("home: 200, server-rendered with every product", home.status === 200 && names(home.text).length === NAMES.length, `${names(home.text).length}/${NAMES.length}`);
+  // React separates adjacent text with <!-- --> in server HTML.
+  const homeText = home.text.replaceAll("<!-- -->", "");
+  check("home: 200, server-rendered hero, categories and top-rated row from the catalogue", home.status === 200
+    && home.text.includes(">Shop everyday essentials<") && homeText.includes(`${NAMES.length} products · 4 categories`)
+    && home.text.includes('href="/products?category=Accessories"') && home.text.includes(">Top rated<"), String(home.status));
+  // Every seeded product has the same rating, so the top four are decided by name.
+  check("home: top rated ties broken by name", JSON.stringify(inOrder(home.text, ["Athletic Skateboard Shoes", "Bathroom Mat", "Espresso Maker", "Luxury Towel Set"])) !== "null"
+    && !home.text.includes(">Straw Sunhat<"), "");
   check("home: product images use the optimiser (srcset)", home.text.includes("/_next/image?url=%2Fimages%2Fproducts%2F"));
-  const lazy = (home.text.match(/loading="lazy"/g) ?? []).length;
-  check("home: first row preloaded, later images lazy", home.text.includes('rel="preload"') && lazy >= NAMES.length - 4, `${lazy} lazy`);
+  check("home: only the hero image is preloaded", (home.text.match(/rel="preload" as="image"/g) ?? []).length === 1, `${(home.text.match(/rel="preload" as="image"/g) ?? []).length}`);
+  const legacy = await request(`${origin}/?q=towel&category=Home`);
+  check("home: old listing links → 307 to /products with the same settings", legacy.status === 307 && legacy.headers.location === "/products?q=towel&category=Home", `${legacy.status} ${legacy.headers.location}`);
+  const legacySort = await request(`${origin}/?sort=price-asc`);
+  check("home: old ?sort= link → 307 to /products?sort=", legacySort.status === 307 && legacySort.headers.location === "/products?sort=price-asc", `${legacySort.status} ${legacySort.headers.location}`);
+
+  const listing = await request(`${origin}/products`);
+  check("listing: 200, server-rendered with every product", listing.status === 200 && names(listing.text).length === NAMES.length, `${names(listing.text).length}/${NAMES.length}`);
+  const lazy = (listing.text.match(/loading="lazy"/g) ?? []).length;
+  check("listing: first row preloaded, later images lazy", listing.text.includes('rel="preload"') && lazy >= NAMES.length - 4, `${lazy} lazy`);
+  const byPrice = await request(`${origin}/products?sort=price-desc`);
+  check("sort: ?sort=price-desc renders the dearest first (server HTML)", inOrder(byPrice.text, [...NAMES].reverse()) !== null, "");
+  const byName = await request(`${origin}/products?category=Home&sort=name-asc`);
+  check("sort: combined with a category", JSON.stringify(inOrder(byName.text, ["Bathroom Mat", "Luxury Towel Set"])) !== "null" && names(byName.text).length === 2);
+  check("sort: works without JavaScript (GET form, selected option, <noscript> Apply button)",
+    /<form[^>]*action="\/products"/.test(byPrice.text) && /<option value="price-desc" selected="">/.test(byPrice.text)
+    && /<noscript><button[^>]*type="submit"[^>]*>Apply<\/button><\/noscript>/.test(byPrice.text));
+  check("sort: canonical URL is the plain listing", /<link rel="canonical" href="[^"]*\/products"/.test(byPrice.text));
+  const unknownSort = await request(`${origin}/products?sort=cheapest`);
+  check("sort: an unknown value is ignored (200, catalogue order)", unknownSort.status === 200 && inOrder(unknownSort.text, NAMES) !== null);
 
   const search = await request(`${origin}/products?q=towel`);
   check("search: /products?q=towel lists only matches", search.status === 200 && JSON.stringify(names(search.text)) === JSON.stringify(["Luxury Towel Set"]));
@@ -292,7 +322,9 @@ async function productionChecks(origin, pool) {
 
 async function developmentChecks(origin) {
   const home = await request(`${origin}/`);
-  check("dev: home renders every product", home.status === 200 && names(home.text).length === NAMES.length, `${home.status} ${names(home.text).length}`);
+  check("dev: home renders", home.status === 200 && home.text.includes(">Shop everyday essentials<"), `${home.status}`);
+  const listing = await request(`${origin}/products`);
+  check("dev: listing renders every product", listing.status === 200 && names(listing.text).length === NAMES.length, `${listing.status} ${names(listing.text).length}`);
   const [id] = PRODUCTS[0];
   check("dev: product page", (await request(`${origin}/products/${id}`)).status === 200);
   check("dev: unknown page is a 404", (await request(`${origin}/no-such-page`)).status === 404);
