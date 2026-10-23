@@ -2,14 +2,19 @@ import { existsSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { PRODUCTS } from "@/test/products";
 import {
+  catalogHref,
   categoriesOf,
+  categorySummaries,
   filterProducts,
   formatMoney,
   parseProduct,
   parseProducts,
+  parseSort,
   productImageSource,
   ratingImageSource,
   searchParam,
+  sortProducts,
+  topRated,
 } from "./product";
 
 describe("parsing API products", () => {
@@ -93,5 +98,65 @@ describe("image paths", () => {
   test("money is formatted like the Vite app", () => {
     expect(formatMoney(1090)).toBe("$10.90");
     expect(formatMoney(0)).toBe("$0.00");
+  });
+});
+
+describe("sorting (?sort=)", () => {
+  const product = (id: string, name: string, priceCents: number, stars = 4, count = 1) => ({ ...PRODUCTS[0]!, id, name, priceCents, rating: { stars, count } });
+  const ids = (list: { id: string }[]) => list.map((item) => item.id);
+
+  test("only the four known orders are accepted; anything else keeps the catalogue order", () => {
+    expect(["name-asc", "name-desc", "price-asc", "price-desc"].map(parseSort)).toEqual(["name-asc", "name-desc", "price-asc", "price-desc"]);
+    expect(["", "price", "PRICE-ASC", "rating", "name-asc "].map(parseSort)).toEqual(["", "", "", "", ""]);
+    expect(ids(sortProducts(PRODUCTS, ""))).toEqual(ids(PRODUCTS));
+  });
+
+  test("name and price orders over the real fixture data", () => {
+    const names = (sort: Parameters<typeof sortProducts>[1]) => sortProducts(PRODUCTS, sort).map((item) => item.name);
+    expect(names("name-asc")).toEqual(["Athletic Skateboard Shoes", "Bath Towel Set", "Espresso Maker", "Round Sunglasses", "Straw Sunhat"]);
+    expect(names("name-desc")).toEqual(["Straw Sunhat", "Round Sunglasses", "Espresso Maker", "Bath Towel Set", "Athletic Skateboard Shoes"]);
+    expect(names("price-asc")).toEqual(["Round Sunglasses", "Straw Sunhat", "Bath Towel Set", "Athletic Skateboard Shoes", "Espresso Maker"]);
+    expect(names("price-desc")).toEqual(["Espresso Maker", "Athletic Skateboard Shoes", "Bath Towel Set", "Straw Sunhat", "Round Sunglasses"]);
+  });
+
+  test("ties are broken deterministically, whatever order the API returned", () => {
+    const list = [product("c", "Mug", 500), product("a", "mug", 500), product("b", "Bowl", 500), product("d", "Mug", 300)];
+    for (const input of [list, [...list].reverse()]) {
+      // Same price: by name (case-insensitive), then id.
+      expect(ids(sortProducts(input, "price-asc"))).toEqual(["d", "b", "a", "c"]);
+      expect(ids(sortProducts(input, "price-desc"))).toEqual(["b", "a", "c", "d"]);
+      // Same name: cheaper first, then id — in both name directions.
+      expect(ids(sortProducts(input, "name-asc"))).toEqual(["b", "d", "a", "c"]);
+      expect(ids(sortProducts(input, "name-desc"))).toEqual(["d", "a", "c", "b"]);
+    }
+  });
+
+  test("numbers in names sort naturally and the input is not changed", () => {
+    const list = [product("x", "Item 10", 1), product("y", "Item 2", 1)];
+    expect(ids(sortProducts(list, "name-asc"))).toEqual(["y", "x"]);
+    expect(ids(list)).toEqual(["x", "y"]);
+  });
+});
+
+describe("home page selections", () => {
+  test("top rated: highest average, then most ratings; unrated products are left out", () => {
+    const unrated = { ...PRODUCTS[0]!, id: "z", name: "New", rating: { stars: 0, count: 0 } };
+    expect(topRated([...PRODUCTS, unrated], 3).map((item) => item.name)).toEqual(["Espresso Maker", "Athletic Skateboard Shoes", "Straw Sunhat"]);
+    expect(topRated([unrated], 4)).toEqual([]);
+  });
+
+  test("categories with counts and the top-rated product as the cover photo", () => {
+    expect(categorySummaries(PRODUCTS).map(({ name, count, cover }) => [name, count, cover.name])).toEqual([
+      ["Accessories", 2, "Straw Sunhat"],
+      ["Footwear", 1, "Athletic Skateboard Shoes"],
+      ["Home", 1, "Bath Towel Set"],
+      ["Kitchen", 1, "Espresso Maker"],
+    ]);
+  });
+
+  test("listing URLs keep the order q, category, sort and leave out empty values", () => {
+    expect(catalogHref("/products", {})).toBe("/products");
+    expect(catalogHref("/products", { sort: "price-asc" })).toBe("/products?sort=price-asc");
+    expect(catalogHref("/products", { query: "sun hat", category: "Home & Garden", sort: "name-desc" })).toBe("/products?q=sun+hat&category=Home+%26+Garden&sort=name-desc");
   });
 });

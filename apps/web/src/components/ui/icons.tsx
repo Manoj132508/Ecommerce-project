@@ -57,6 +57,14 @@ export function CloseIcon(props: ComponentProps<"svg">) {
   );
 }
 
+export function CheckIcon(props: ComponentProps<"svg">) {
+  return (
+    <Icon {...props}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
 export function SearchIcon(props: ComponentProps<"svg">) {
   return (
     <Icon {...props}>

@@ -8,6 +8,8 @@ interface ProductImageProps {
   sizes: string;
   /** Above the fold (first row, product page): fetched early instead of lazily. */
   preload?: boolean;
+  /** The photo only illustrates something already named nearby (a category card): empty alt text. */
+  decorative?: boolean;
   className?: string;
 }
 
@@ -16,12 +18,12 @@ interface ProductImageProps {
  * public/images/products, served through the Next.js optimiser (resized,
  * WebP); off-site https images are shown as they are.
  */
-export function ProductImage({ product, sizes, preload = false, className = "" }: ProductImageProps) {
+export function ProductImage({ product, sizes, preload = false, decorative = false, className = "" }: ProductImageProps) {
   const source = productImageSource(product.image);
   if (!source) {
     return (
       <div className={cn("flex aspect-square items-center justify-center rounded-sm bg-secondary text-sm text-muted-foreground", className)}>
-        Image unavailable
+        {decorative ? "" : "Image unavailable"}
       </div>
     );
   }
@@ -29,7 +31,7 @@ export function ProductImage({ product, sizes, preload = false, className = "" }
     <div className={cn("relative aspect-square", className)}>
       <Image
         src={source.src}
-        alt={product.name}
+        alt={decorative ? "" : product.name}
         fill
         sizes={sizes}
         preload={preload}

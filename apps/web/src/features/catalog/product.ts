@@ -87,6 +87,90 @@ export function categoriesOf(products: Product[]): string[] {
   return [...new Set(products.map((product) => product.category.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+/** Sort orders for ?sort= (P4). An empty value keeps the catalogue's own order. */
+export const SORT_OPTIONS = [
+  { value: "", label: "Catalogue order" },
+  { value: "name-asc", label: "Name: A to Z" },
+  { value: "name-desc", label: "Name: Z to A" },
+  { value: "price-asc", label: "Price: low to high" },
+  { value: "price-desc", label: "Price: high to low" },
+] as const;
+
+export type SortOrder = (typeof SORT_OPTIONS)[number]["value"];
+
+/** A known sort order, or "" for anything else (unknown values are ignored, not an error). */
+export function parseSort(value: string): SortOrder {
+  return SORT_OPTIONS.find((option) => option.value === value)?.value ?? "";
+}
+
+export function sortLabel(sort: SortOrder): string {
+  return SORT_OPTIONS.find((option) => option.value === sort)?.label ?? "";
+}
+
+// A fixed locale, so server and client agree; "Item 2" sorts before "Item 10".
+const names = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+const byName = (a: Product, b: Product) => names.compare(a.name, b.name);
+const byPrice = (a: Product, b: Product) => a.priceCents - b.priceCents;
+const byId = (a: Product, b: Product) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/**
+ * A sorted copy. Ties are broken deterministically: equal names by price (low
+ * first), equal prices by name (A to Z), and finally by id, so the order never
+ * depends on the API's row order.
+ */
+export function sortProducts(products: Product[], sort: SortOrder): Product[] {
+  const compare: Record<Exclude<SortOrder, "">, (a: Product, b: Product) => number> = {
+    "name-asc": (a, b) => byName(a, b) || byPrice(a, b) || byId(a, b),
+    "name-desc": (a, b) => byName(b, a) || byPrice(a, b) || byId(a, b),
+    "price-asc": (a, b) => byPrice(a, b) || byName(a, b) || byId(a, b),
+    "price-desc": (a, b) => byPrice(b, a) || byName(a, b) || byId(a, b),
+  };
+  return sort ? [...products].sort(compare[sort]) : [...products];
+}
+
+/**
+ * Highest average rating first, then the most ratings, then name and id.
+ * Products nobody has rated are left out: "top rated" means rated.
+ */
+export function topRated(products: Product[], limit: number): Product[] {
+  return products
+    .filter((product) => product.rating.count > 0)
+    .sort((a, b) => b.rating.stars - a.rating.stars || b.rating.count - a.rating.count || byName(a, b) || byId(a, b))
+    .slice(0, limit);
+}
+
+export interface CategorySummary {
+  name: string;
+  count: number;
+  /** The category's top-rated product (or its first one), whose photo represents it. */
+  cover: Product;
+}
+
+/** Each category with its product count, in the same order as the category chips. */
+export function categorySummaries(products: Product[]): CategorySummary[] {
+  return categoriesOf(products).flatMap((name) => {
+    const members = products.filter((product) => product.category.trim().toLowerCase() === name.toLowerCase());
+    const cover = topRated(members, 1)[0] ?? members[0];
+    return cover ? [{ name, count: members.length, cover }] : [];
+  });
+}
+
+export interface CatalogParams {
+  query?: string;
+  category?: string;
+  sort?: SortOrder;
+}
+
+/** A listing URL; parameters keep the order q, category, sort and empty ones are left out. */
+export function catalogHref(basePath: string, { query = "", category = "", sort = "" }: CatalogParams): string {
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (category) params.set("category", category);
+  if (sort) params.set("sort", sort);
+  const search = params.toString();
+  return search ? `${basePath}?${search}` : basePath;
+}
+
 /**
  * Where an image is served from. The API stores paths relative to the site
  * root ("images/products/socks.jpg"); they map to /images/products/... in
