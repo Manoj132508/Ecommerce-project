@@ -27,6 +27,25 @@ test.describe("cart, checkout and orders", () => {
     await expect(opener).toBeFocused();
   });
 
+  test("cart drawer: line photo, the API's total, no sideways scrolling; no slide-in when motion is reduced", async ({ page }, testInfo) => {
+    await signInThroughApi(page.request, newCustomer("Motion"));
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`/products/${PRODUCTS.sunglasses.id}`);
+    await page.getByRole("button", { name: "Add to Cart" }).click();
+    await expectCartCount(page, 1);
+    await openCartDrawer(page);
+    const dialog = page.getByRole("dialog", { name: "Your cart" });
+    await expect(dialog.getByText("1 item", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("link", { name: PRODUCTS.sunglasses.name })).toBeVisible();
+    await expect(dialog.getByText("Order total")).toBeVisible();
+    await expect(dialog.getByRole("link", { name: "Checkout" })).toBeVisible();
+    // motion-safe: the entrance animation is not applied at all when the visitor asks for reduced motion.
+    expect(await dialog.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
+    const overflow = await dialog.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await snapshot(page, testInfo.project.name, "03b-cart-drawer");
+  });
+
   test("full checkout from the cart page to tracking, with form validation", async ({ page, problems }, testInfo) => {
     const customer = newCustomer("Buyer");
     await signInThroughApi(page.request, customer);
@@ -52,11 +71,14 @@ test.describe("cart, checkout and orders", () => {
     await expect(page.getByLabel("Full name")).toHaveValue(customer.name);
     await expect(page.getByLabel("Email")).toHaveValue(customer.email);
 
-    // Native validation keeps the visitor on step 1 and explains the missing field.
+    // Step 1: each missing field gets its own linked message and focus moves to the first one.
     await page.getByRole("button", { name: "Review order" }).click();
     await expect(page.getByText("Step 1 of 2")).toBeVisible();
     const phone = page.getByLabel("Phone");
-    expect(await phone.evaluate((input: HTMLInputElement) => input.validity.valueMissing && input.validationMessage.length > 0)).toBe(true);
+    await expect(phone).toBeFocused();
+    await expect(phone).toHaveAttribute("aria-invalid", "true");
+    await expect(phone).toHaveAccessibleDescription(/Enter your phone number\./);
+    await expect(page.getByLabel("Address")).toHaveAccessibleDescription(/Enter your street address\./);
     await expectNoHorizontalScroll(page);
     await snapshot(page, project, "04-checkout-details");
 
@@ -65,7 +87,8 @@ test.describe("cart, checkout and orders", () => {
     await page.getByLabel("City").fill("London");
     await page.getByLabel("Postal code").fill("N1 1AA");
     await page.getByRole("button", { name: "Review order" }).click();
-    await expect(page.getByRole("heading", { name: "Final review" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Final review" })).toBeFocused();
+    await expect(page.getByText("Step 2 of 2")).toBeVisible();
     await expect(page.getByRole("main").getByText(/No payment provider is connected/)).toBeVisible();
     await snapshot(page, project, "05-checkout-review");
 
@@ -80,7 +103,8 @@ test.describe("cart, checkout and orders", () => {
     await expect(page.getByRole("article")).toHaveCount(1);
     await expectNoHorizontalScroll(page);
     // Line images stay thumbnails on every viewport (the Vite limit was 150 px).
-    const thumbnail = await page.getByRole("article").getByRole("img", { name: PRODUCTS.sunhat.name }).evaluate((image) => image.getBoundingClientRect().width);
+    // (Decorative: the product name is the heading beside it.)
+    const thumbnail = await page.getByRole("article").locator("img").first().evaluate((image) => image.getBoundingClientRect().width);
     expect(thumbnail).toBeLessThanOrEqual(150);
     await snapshot(page, project, "07-orders");
 

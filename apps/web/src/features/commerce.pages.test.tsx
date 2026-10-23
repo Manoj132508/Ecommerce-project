@@ -89,7 +89,8 @@ describe("cart", () => {
   test("uses quantities 1 through 10 and sends an authenticated update", async () => {
     const { requests } = fakeApi({ ...routes(), [`PUT /api/cart-items/${product.id}`]: { status: 200, body: cartLine } });
     const { user } = renderWithProviders(<CartPageClient />, { session: SESSION });
-    const select = await screen.findByRole("combobox", { name: "Quantity" });
+    // Named per product, so several cart lines are told apart by screen readers.
+    const select = await screen.findByRole("combobox", { name: `Quantity for ${product.name}` });
     expect(screen.getAllByRole("option")).toHaveLength(10);
     await user.selectOptions(select, "10");
     await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({ method: "PUT", body: { quantity: 10 }, headers: expect.objectContaining({ "x-csrf-token": SESSION.csrfToken }) })));

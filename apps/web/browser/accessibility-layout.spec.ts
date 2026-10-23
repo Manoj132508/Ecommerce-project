@@ -88,12 +88,14 @@ test.describe("accessibility and layout", () => {
     test.skip(browserName !== "chromium" || testInfo.project.name !== "chromium-desktop", "one desktop engine is enough: zoom is emulated by the CSS viewport");
     const customer = newCustomer("Zoom");
     const csrf = await signInThroughApi(page.request, customer);
+    // An order first (it empties the cart), then a cart line, so every commerce page has content.
+    const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, customer);
     await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
     // 1366×900 at 200 % zoom is a 683×450 CSS viewport; WCAG 1.4.10 reflow is 320 CSS px wide;
     // 375 and 768 are the small-phone and tablet widths of the Phase 6 layout review.
     for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }, { width: 375, height: 667 }, { width: 768, height: 1024 }]) {
       await page.setViewportSize(viewport);
-      for (const path of ["/", "/products?sort=name-asc", `/products/${PRODUCTS.sunglasses.id}`, "/cart", "/checkout", "/orders", "/account"]) {
+      for (const path of ["/", "/products?sort=name-asc", `/products/${PRODUCTS.sunglasses.id}`, "/cart", "/checkout", "/orders", `/orders/${orderId}`, `/tracking?orderId=${orderId}&productId=${PRODUCTS.sunhat.id}`, "/account"]) {
         await page.goto(path);
         await settle(page);
         await expectNoHorizontalScroll(page);
@@ -103,6 +105,26 @@ test.describe("accessibility and layout", () => {
       await settle(page);
       await page.getByRole("button", { name: "Review order" }).scrollIntoViewIfNeeded();
       await expect(page.getByRole("button", { name: "Review order" })).toBeInViewport();
+    }
+  });
+
+  test("signed in, Windows high contrast (forced colours): cart, checkout and orders keep a border on every control (Chromium)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium", "forced-colours emulation is Chromium-only");
+    const customer = newCustomer("Contrast");
+    const csrf = await signInThroughApi(page.request, customer);
+    await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, customer);
+    await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
+    await page.emulateMedia({ forcedColors: "active" });
+    for (const [name, path] of [["cart", "/cart"], ["checkout", "/checkout"], ["orders", "/orders"]] as const) {
+      await page.goto(path);
+      await settle(page);
+      // Native radios and checkboxes are drawn by the system in forced colours (no author border); they must still be displayed.
+      expect(await page.evaluate(() => [...document.querySelectorAll<HTMLInputElement>("input[type=radio], input[type=checkbox]")].filter((input) => input.offsetParent === null && input.type !== "hidden").length), `${name}: hidden native controls`).toBe(0);
+      const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input:not([type=radio]):not([type=checkbox]), select, textarea")]
+        .filter((element) => element.offsetParent !== null && getComputedStyle(element).borderTopWidth === "0px")
+        .map((element) => element.getAttribute("aria-label") || element.textContent?.trim() || element.outerHTML.slice(0, 160)));
+      expect(borderless, `${name}: controls without a border in forced colours`).toEqual([]);
+      await snapshot(page, testInfo.project.name, `31-forced-colors-${name}`);
     }
   });
 
@@ -132,7 +154,9 @@ test.describe("accessibility and layout", () => {
     await signInThroughApi(page.request, newCustomer("Header"));
     await page.goto("/");
     await settle(page);
-    await expect(page.getByRole("contentinfo")).toContainText("No payment provider is connected");
+    // The no-payment notice lives at checkout and on the order pages (6C), not in every page's footer.
+    await expect(page.getByRole("contentinfo")).toContainText("Prices are shown in US dollars.");
+    await expect(page.getByRole("contentinfo")).not.toContainText("payment");
     await expect(page.getByRole("navigation", { name: "Shop" }).getByRole("link", { name: "All products" })).toHaveAttribute("href", "/products");
     if (!isCompact(page)) {
       await expect(page.getByRole("link", { name: "Cart (0)" })).toBeVisible();
@@ -158,9 +182,11 @@ test.describe("accessibility and layout", () => {
     for (const [name, path] of [["home", "/"], ["listing", "/products"], ["product", `/products/${PRODUCTS.shoes.id}`], ["sign-in", "/login"], ["register", "/register"]] as const) {
       await page.goto(path);
       await settle(page);
-      const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input, select, textarea")]
+      // Native radios and checkboxes are drawn by the system in forced colours (no author border); they must still be displayed.
+      expect(await page.evaluate(() => [...document.querySelectorAll<HTMLInputElement>("input[type=radio], input[type=checkbox]")].filter((input) => input.offsetParent === null && input.type !== "hidden").length), `${name}: hidden native controls`).toBe(0);
+      const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input:not([type=radio]):not([type=checkbox]), select, textarea")]
         .filter((element) => element.offsetParent !== null && getComputedStyle(element).borderTopWidth === "0px")
-        .map((element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? element.tagName));
+        .map((element) => element.getAttribute("aria-label") || element.textContent?.trim() || element.outerHTML.slice(0, 160)));
       expect(borderless, `${name}: controls without a border in forced colours`).toEqual([]);
       await snapshot(page, testInfo.project.name, `31-forced-colors-${name}`);
     }
