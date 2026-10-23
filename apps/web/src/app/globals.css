@@ -118,6 +118,14 @@
   }
 }
 
+/* Cart drawer entrance (used with motion-safe: only when motion is not reduced). */
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

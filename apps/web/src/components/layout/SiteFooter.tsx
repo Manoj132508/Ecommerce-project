@@ -14,9 +14,8 @@ export function SiteFooter() {
       <Container className="grid gap-8 py-10 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr]">
         <div className="grid content-start gap-3">
           <p className="text-lg font-semibold">{publicEnv.appName}</p>
-          <p className="max-w-md text-sm text-white/85">
-            No payment provider is connected. Placing an order records it; no card is charged.
-          </p>
+          {/* The no-payment notice belongs to checkout and the order pages (6C), not every page. */}
+          <p className="max-w-md text-sm text-white/85">Prices are shown in US dollars.</p>
         </div>
         <nav aria-label="Shop">
           <h2 className="mb-3 text-sm font-semibold">Shop</h2>

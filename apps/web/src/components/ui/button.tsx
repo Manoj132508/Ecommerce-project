@@ -5,10 +5,12 @@ import { cn } from "@/lib/utils";
 /**
  * Button styles (shadcn/ui pattern). Use <Button> for actions; for links that
  * look like buttons, put buttonVariants() on the <Link> (no asChild, so no
- * Radix Slot dependency). Touch targets are 44 px high below lg.
+ * Radix Slot dependency). Touch targets are 44 px high below lg. In forced
+ * colours (Windows high contrast) fills disappear, so every variant except
+ * link draws a border in the system text colour; links styled as buttons too.
  */
 export const buttonVariants = cva(
-  "focus-ring inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-semibold whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-60 aria-disabled:pointer-events-none aria-disabled:opacity-60",
+  "focus-ring inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-semibold whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-60 aria-disabled:pointer-events-none aria-disabled:opacity-60 forced-colors:border forced-colors:border-current",
   {
     variants: {
       variant: {
@@ -17,7 +19,7 @@ export const buttonVariants = cva(
         outline: "border border-primary bg-background text-primary hover:bg-accent",
         ghost: "text-foreground hover:bg-secondary",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive-hover",
-        link: "text-primary underline underline-offset-4 hover:text-primary-hover",
+        link: "text-primary underline underline-offset-4 hover:text-primary-hover forced-colors:border-0",
         /** On the brand-coloured header and footer (the parent sets --ring to white). */
         inverse: "text-brand-foreground hover:bg-white/10",
       },
