@@ -34,7 +34,7 @@ date, tester, browser, assistive technology and version; do not mark an item as 
 | 2.5 | Add to cart; "Added N to your cart" | The confirmation is announced (polite live region) | ☐ | ☐ |
 | 2.6 | Open the cart drawer (Preview / Menu → Cart preview) | Dialog "Your cart" announced; focus on Close; Tab/swipe stays inside; Escape (or Close) returns focus to the opener | ☐ | ☐ |
 | 2.7 | Cart page: change quantity and delivery option; remove an unavailable item | Changes announced; delivery options read as a radio group with dates and prices | ☐ | ☐ |
-| 2.8 | Checkout: submit with Phone empty | The browser's required-field message is read and focus is on Phone | ☐ | ☐ |
+| 2.8 | Checkout (6C): submit with Phone, Address, City and Postal code empty | Focus moves to Phone; its hint and "Enter your phone number." are read with it; each other empty field reads its own message when reached | ☐ | ☐ |
 | 2.9 | Review step and "Confirm and place order" | "Step 2 of 2" and the no-payment notice are read; the order confirmation heading is read after placing | ☐ | ☐ |
 | 2.10 | Orders: Buy again, Track package | "Added to your cart" announced; tracking progress bar read with its value text (Preparing/Shipped/Delivered) | ☐ | ☐ |
 | 2.11 | Let the session expire (or sign out in another tab) and act | Sign-in page with "Your session has expired" read | ☐ | ☐ |
@@ -42,6 +42,10 @@ date, tester, browser, assistive technology and version; do not mark an item as 
 | 2.13 | Listing (6B): change "Sort by" with the keyboard (NVDA: Alt+Down then arrows/Enter; VO: picker) | Combobox "Sort by" read with its value; focus stays on it after the list updates; the status "N products, sorted by …" is read (check whether NVDA announces it — if not, note it) | ☐ | ☐ |
 | 2.14 | Listing (6B): browser Back after two sort changes and a category chip | Each Back restores the previous order and category; the select reads the restored value | ☐ | ☐ |
 | 2.15 | Product details (6B): breadcrumb and "More in {category}" | Breadcrumb navigation read with the product as the current page; "Add to Cart" in the purchase card vs "Add {name} to cart" in related cards | ☐ | ☐ |
+| 2.16 | Cart (6C): change a quantity and a delivery option with two different products in the cart | Each control is named with its product ("Quantity for …", "Delivery option for …"); "Your cart has been updated." is read after each change | ☐ | ☐ |
+| 2.17 | Checkout (6C): Review order, then Change delivery details | Focus lands on "Final review", then back on "Customer and delivery details"; "Step 2 of 2" and the current step in the step list are read | ☐ | ☐ |
+| 2.18 | Checkout (6C): place an order with the network turned off, then on, and retry | The alert explains the order will not be placed twice; the retry succeeds once (one order in Orders) | ☐ | ☐ |
+| 2.19 | Orders and tracking (6C): an older order (status not recorded) and a current one | Status read as text ("Status: …"); older lines read "Price paid not recorded" and the current price as "not the price paid"; tracking stages read with the current one marked | ☐ | ☐ |
 
 ## 3. Admin journeys (admin account)
 

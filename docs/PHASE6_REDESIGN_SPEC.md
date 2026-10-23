@@ -1,8 +1,9 @@
 # Phase 6 — Storefront redesign specification
 
 Status: **approved; Phase 6A (design system and shared UI) implemented 2026-10-22** — see §8; **Phase 6B (home,
-catalogue with sorting, product details) implemented 2026-10-23** — see §9. Cart, checkout, orders, account,
-authentication and admin are redesigned from 6C onwards. It applies to the
+catalogue with sorting, product details) implemented 2026-10-23** — see §9; **Phase 6C (cart drawer, cart, checkout,
+orders, tracking) implemented 2026-10-23** — see §10. Account,
+authentication and admin come next. It applies to the
 Next.js storefront in `apps/web` only; the legacy Vite app is not redesigned. Behaviour, URLs, API
 contracts, security properties and test coverage from Phases 5A–5F stay as they are: the redesign
 changes presentation and component structure, not business rules.
@@ -318,3 +319,68 @@ to your cart" message (deliberate, no layout shift).
 wrap rather than scroll horizontally on phones; no toast (`Sonner`) for add to cart — the existing inline live
 message stays; no accordion for product information on mobile (cards instead, so headings stay plain `h2`s).
 Screen-reader testing of search, filters and sorting is still manual (`docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`).
+
+## 10. Phase 6C — cart drawer, cart, checkout, orders and tracking (2026-10-23)
+
+**Pages redesigned:** cart drawer, `/cart`, `/checkout` (details, review, failure states), `/orders`,
+`/orders/[id]` (including the `?placed=1` confirmation), `/tracking`, and the order/tracking 404 pages. These pages
+now use a 1152 px width (`CommerceContent`, `max-w-6xl`) instead of the 1024 px `NarrowContent`. Account and auth pages
+are unchanged. No API, business rule, query key, Redux state or backend file changed.
+
+**Components** (new unless marked):
+- `ui/alert` (shadcn Alert: info, success, warning, destructive; no Radix) — every error, notice and confirmation box.
+- `cart/OrderSummary` — **replaces three hand-written copies** (drawer, cart page, checkout aside). It only shows the
+  API's `GET /payment-summary` figures (items, shipping — "Free" at 0 — total before tax, tax, order total); nothing
+  is added up in the browser. Compact variant in the drawer.
+- `cart/CartLine` — `CartLineRow` (cart page: photo, name, unit and line price, `QuantitySelector` 1–10, delivery
+  option radio cards, Remove; a deleted product stays as "This product is no longer available" with "Remove
+  unavailable item") and `CartLineCompact` (drawer and checkout review: photo, name, quantity, delivery date, line
+  price). Line prices are current price × quantity for display only and are labelled "Item total".
+- `checkout/CheckoutSteps` (step list, `aria-current="step"`, "Step N of 2" in text, tick + "(completed)" for done
+  steps), `checkout/customer` (field rules mirroring `POST /api/orders`: every field non-empty after trimming, the same
+  loose email shape; the server still validates), `placeOrderMessage` (one message per failure class).
+- `orders/OrderStatus` (`OrderStatusBadge`: status as text, colour only repeats it; "Not recorded (older order)" for
+  MongoDB orders), `orders/OrderCard` + `OrderLineItem` (redesigned; shared by list and details), restyled
+  `BuyAgainButton`, `EmptyState`/`Skeleton` loading, empty and error states everywhere.
+- Reused: `Button`/`buttonVariants`, `Card`, `Input`, `Label`, `Badge`, `QuantitySelector`, `ProductImage`
+  (decorative where the product name is next to it), `formatMoney`, `lib/format` dates.
+
+**Decisions and differences from 6B:**
+- **No Radix `Sheet` for the drawer.** The existing drawer already does everything a Sheet would (focus in, Tab trap,
+  Escape, scroll lock, focus return incl. the Safari opener fix from 5F) and is covered by the browser suite; it was
+  restyled only (brand header, count, thumbnails, skeleton, retry, empty state, shared summary). A slide-in runs only
+  under `motion-safe` (tested: no animation with reduced motion). Same reasoning as 6B's native `<select>`.
+- **Checkout validation is now in-page** (`noValidate`): each field's error is linked with `aria-describedby`,
+  `aria-invalid` is set, focus moves to the first invalid field, and an edit clears that field's error — the 5G sign-in
+  pattern. 5F/5G used the browser's native messages. Step changes move focus to the step heading.
+- **Idempotency unchanged** (one key per reviewed set of details in a ref; retries reuse it, edited details get a new
+  key; the server answers 422 for a reused key with different details). A pending order disables the button and sets
+  `aria-busy`; a second click sends nothing (tested). Failures: network → "will not be placed twice … check your
+  orders"; 409 → message + "Review your cart"; 401 → sign in again; 403 → refresh; 400/422 → the server's message.
+- **The no-payment notice moved out of the global footer** (now "Prices are shown in US dollars.") and is shown on the
+  checkout review step (warning Alert), the confirmation ("No payment was processed") and order details ("No payment
+  was taken").
+- **Prices on orders:** PostgreSQL lines show "Price paid: $x each" from the immutable snapshot; MongoDB lines (current
+  product returned) show "Price paid not recorded" and "Current price $y (not the price paid)"; missing products show
+  "Product details not recorded" / "Image not available". The order total is the stored `totalCostCents`.
+- Order details shows the status once (page header), a stored-total card and the delivery address; the list says
+  "newest first" (both repositories sort by order time descending). Tracking: status badge, product, three-stage
+  stepper and the existing progress bar; the text says progress is estimated and no courier tracking is connected.
+- **Accessible names:** per-product names ("Quantity for …", "Delivery option for …", "Remove …"); visually hidden
+  name parts never start with a space inside the hidden span (an accessible-name computation trimmed it: "Quantityfor").
+- **Forced colours:** links styled as buttons (and every button variant except `link`) get a border in the system
+  text colour; native radios are drawn by the system and keep their option card border (screenshot checked).
+- **Layout bug found and fixed:** a long unbroken email on order details widened the page by 11 px in Firefox
+  (`break-words` does not lower a grid column's minimum width). Two-column grids are now `minmax(0,1fr)` and
+  addresses/emails use `overflow-wrap: anywhere`; checked with a 120-character email in all three engines.
+
+**Verification (2026-10-23, final build):** typecheck, lint, build, `npm audit` 0 (web, backend, Vite); unit/component
+**220/220** (+15; mutation checks: a client-side total, no double-submit guard, a current price shown as paid, no
+focus on the first error and a new key on every review each fail a test); proxy e2e **52/52**; pages e2e **92/92**;
+backend MongoDB **212 passed, 9 todo**, PostgreSQL **264/264**; Vite **47/47**. Browser suite, Firefox run separately:
+final Chromium + WebKit **120 passed, 0 failed, 0 flaky, 25 skipped**; Firefox alone **23 passed, 0 failed, 0 flaky,
+6 skipped** (after these runs only a link's underline class changed; the commerce spec was re-run on that build:
+12/12 Chromium/WebKit, 4/4 Firefox). Earlier 6C runs and the stall analysis: MIGRATION_PLAN.md 6C.
+
+**Screenshots reviewed** (1366 px, 820 px, Pixel 7): cart, checkout errors, review, confirmation, orders, tracking,
+drawer, forced colours — no overlap or clipping; one inconsistency fixed (the two "Change" links styled alike).
