@@ -46,6 +46,8 @@ date, tester, browser, assistive technology and version; do not mark an item as 
 | 2.17 | Checkout (6C): Review order, then Change delivery details | Focus lands on "Final review", then back on "Customer and delivery details"; "Step 2 of 2" and the current step in the step list are read | ☐ | ☐ |
 | 2.18 | Checkout (6C): place an order with the network turned off, then on, and retry | The alert explains the order will not be placed twice; the retry succeeds once (one order in Orders) | ☐ | ☐ |
 | 2.19 | Orders and tracking (6C): an older order (status not recorded) and a current one | Status read as text ("Status: …"); older lines read "Price paid not recorded" and the current price as "not the price paid"; tracking stages read with the current one marked | ☐ | ☐ |
+| 2.20 | Sign in / register (6D): Show password | Read as a toggle button "Show password, not pressed"; pressing shows the text and is announced as pressed; the second register field's toggle is "Show confirmed password" | ☐ | ☐ |
+| 2.21 | Account (6D): Sign out on all devices, then Escape | Alert dialog read with its explanation, focus on "Stay signed in"; Escape returns to the button; confirming signs out | ☐ | ☐ |
 
 ## 3. Admin journeys (admin account)
 
@@ -54,9 +56,11 @@ date, tester, browser, assistive technology and version; do not mark an item as 
 | 3.1 | Dashboard | Figures read as term/value pairs; the no-payment note is read | ☐ | ☐ |
 | 3.2 | Add product, submit empty | Summary alert read; focus on Product name; each field reads its hint and error | ☐ | ☐ |
 | 3.3 | Create, then edit a product | Saved message read as status after returning to the list | ☐ | ☐ |
-| 3.4 | Delete a product | Confirmation read as an alert dialog with its explanation; focus on "Delete permanently"; "Keep product" returns focus to the row's Delete button | ☐ | ☐ |
+| 3.4 | Delete a product (6D: modal dialog) | Read as an alert dialog with its title and explanation; focus on "Keep product"; the page behind cannot be reached (VO rotor / NVDA browse mode stay inside); Escape or "Keep product" returns focus to the row's Delete button; after deleting, focus is on the filter field | ☐ | ☐ |
 | 3.5 | Order: change status without a reason | Focus on Reason; error read with its hint | ☐ | ☐ |
 | 3.6 | Order: change status with a reason | "Status changed to …" read; the new entry appears in Status history | ☐ | ☐ |
+| 3.7 | Product and order tables (6D) at desktop and phone width | Desktop: read as a table with column headers (NVDA T / Ctrl+Alt+arrows); phone: the same table, each cell still announced with its column | ☐ | ☐ |
+| 3.8 | Status history timeline (6D) | Each entry read as "Status: Placed to Status: Processing", then time, name and reason | ☐ | ☐ |
 
 ## 4. Visual settings (no screen reader)
 

@@ -2,8 +2,9 @@
 
 Status: **approved; Phase 6A (design system and shared UI) implemented 2026-10-22** — see §8; **Phase 6B (home,
 catalogue with sorting, product details) implemented 2026-10-23** — see §9; **Phase 6C (cart drawer, cart, checkout,
-orders, tracking) implemented 2026-10-23** — see §10. Account,
-authentication and admin come next. It applies to the
+orders, tracking) implemented 2026-10-23** — see §10; **Phase 6D (sign-in, registration, account, admin)
+implemented 2026-10-23** — see §11. Every page task in §4 has been redesigned; what was built differently or
+not at all (Radix Sheet/DropdownMenu, Sonner toasts, rating sort, a 1024 px test project) is recorded in §8–§11. It applies to the
 Next.js storefront in `apps/web` only; the legacy Vite app is not redesigned. Behaviour, URLs, API
 contracts, security properties and test coverage from Phases 5A–5F stay as they are: the redesign
 changes presentation and component structure, not business rules.
@@ -384,3 +385,63 @@ final Chromium + WebKit **120 passed, 0 failed, 0 flaky, 25 skipped**; Firefox a
 
 **Screenshots reviewed** (1366 px, 820 px, Pixel 7): cart, checkout errors, review, confirmation, orders, tracking,
 drawer, forced colours — no overlap or clipping; one inconsistency fixed (the two "Change" links styled alike).
+
+## 11. Phase 6D — sign-in, registration, account and admin (2026-10-23)
+
+**Pages redesigned:** `/login`, `/register`, `/account` (and its section navigation), `/admin`, `/admin/products`,
+`/admin/products/new`, `/admin/products/[id]`, `/admin/orders`, `/admin/orders/[id]`. No API, session, CSRF, rate-limit,
+role check, Redux shape or query key changed; no new dependency.
+
+**New shared components** (shadcn/ui structure, no Radix): `ui/confirm-dialog` (native `<dialog>` + `showModal()`:
+page inert, focus kept inside, Escape cancels; focus starts on the least destructive button and returns to the
+opener — which focuses itself on click, because Safari does not; it cannot be dismissed while the action runs),
+`ui/table` (one semantic table at every width: below 768 px each row becomes a card with inline column names; explicit
+ARIA table roles keep the semantics when the display changes), `ui/textarea`, `EyeIcon`/`EyeOffIcon`. Feature
+components: `auth/AuthCard`, `auth/PasswordInput`, `admin/StatusTimeline`. Reused: `Card`, `Badge`, `Button`,
+`buttonVariants`, `Input`, `Label`, `Alert`, `SectionNav`, `OrderStatusBadge` (now with an optional label: the admin
+wording "Not recorded (legacy)").
+
+**Sign-in and registration:** a centred card; validation, linked errors, focus on the first problem, the 401 linked to
+both fields, the 409 on Email, safe return paths and session notices are unchanged (5G). **Show/hide password (P7):** a
+button with `aria-pressed` and a fixed name ("Show password"; "Show confirmed password" for the second register
+field), `aria-controls` the input; it only switches the input type, and submitting hides the value again so it never
+remains as plain-text form history; nothing is logged or stored (unit-tested against storage, Redux and the query
+cache). Notices are status alerts styled by meaning.
+
+**Account:** the profile shows only what the session API returns (name, email, role); it says plainly that changing
+the details is not available — no address book, payment methods or editing are shown. "Sign out on all devices" asks
+first (modal confirmation, focus on "Stay signed in"). If ending the other sessions fails, this browser is still
+signed out locally (unchanged) and the sign-in page now says the other devices may still be signed in, instead of
+silently going home. Administrators get an Admin link in the account navigation.
+
+**Admin:** a "Store administration · signed in as …" band above the section tabs. Dashboard: products and categories,
+orders and cancellations, **recorded order value** and the last 30 days (cancelled excluded), with "not money
+received" stated; orders by status as links to the filtered list; products by category; recent orders in a table. No
+charts, trends or derived business metrics. Products: a filterable table (product, category, price, stock, keywords,
+actions) that becomes cards on phones; delete in the modal confirmation (after a deletion focus moves to the filter
+field). The product form keeps every field and hint, grouped into Basics, Image, Product information and Search; the
+error summary now lists each problem as a link to its field. Payloads are unchanged — inventory tracking is never sent.
+Orders: status chips with real counts (`aria-current` on the current filter) and a table (customer, placed, status,
+lines, recorded total). Order details: the fixed order record, customer, items (price when ordered vs "price paid not
+recorded · current catalogue price" for legacy lines), the status form (allowed transitions and required reason
+unchanged), the audit trail as a timeline (oldest first, who, when, the reason as stored), and the note that
+cancelling does not refund anything.
+
+**Differences from 6C:** the delete confirmation's first focus moved from "Delete permanently" to "Keep product" (APG
+guidance for destructive dialogs); the admin product list is a table, so product names are no longer headings.
+
+**Accessibility fixes found by the new tests:** accessible names that ran words together — "Cancelled1 order",
+"Shipped1", "Status: PlacedtoStatus: Processing" — because a badge and a count (or a hidden word) were adjacent
+elements without a space; now separated. Safari focus return after the dialog (above).
+
+**Verification (2026-10-23, final build):** typecheck, lint, build; `npm audit` 0 in web, backend and Vite;
+unit/component **232/232** (+12; mutation checks: the password left visible after submit, a chip name without a space,
+a hidden sign-out failure, a dialog dismissable while pending, "Revenue" as a label and no initial focus on the safe
+button each fail a test); proxy e2e **52/52**; pages e2e **92/92**; backend MongoDB **212 passed, 9 todo**, PostgreSQL
+**264/264**; Vite **47/47**. Browser (Firefox run separately): final Chromium + WebKit **133 passed, 0 failed, 0
+flaky, 27 skipped**; Firefox **24 passed, 0 failed, 1 flaky, 7 skipped** (public-pages axe scan over 90 s under CPU
+load, passed on retry). Earlier 6D runs and the load measurements: MIGRATION_PLAN.md 6D.
+
+**Screenshots reviewed** (1366 px, 820 px, Pixel 7, 320 px reflow, forced colours): sign-in, register, account,
+dashboard, product table (cards on phones), product form with errors, order details with timeline — no overlap,
+clipping or sideways scrolling.
