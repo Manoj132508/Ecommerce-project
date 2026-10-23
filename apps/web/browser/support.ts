@@ -1,6 +1,7 @@
 // Shared fixtures and helpers for the browser tests.
-import { test as base, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test as base, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -30,8 +31,56 @@ export interface PageProblems {
   failedRequests: string[];
 }
 
-export const test = base.extend<{ problems: PageProblems }>({
+/** Response times collected per test for the stall investigation (attached as the "timings" annotation). */
+interface Timings {
+  documents: number;
+  slowestDocumentMs: number;
+  apiRequests: number;
+  slowestApi: { request: string; ms: number } | null;
+  /** /api requests that never finished during the test (aborted or still pending at the end). */
+  unfinishedApi: string[];
+}
+
+export const test = base.extend<{ problems: PageProblems; timings: void }, { launchProbe: void }>({
   baseURL: async ({}, provide) => provide(baseURL()),
+  // Measurement only (Phase 7A): changes no timeout, retry or assertion.
+  timings: [async ({ page }, provide, testInfo) => {
+    const started = new Map<Request, string>();
+    const summary: Timings = { documents: 0, slowestDocumentMs: 0, apiRequests: 0, slowestApi: null, unfinishedApi: [] };
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/")) started.set(request, `${request.method()} ${new URL(request.url()).pathname}`);
+    });
+    page.on("requestfinished", (request) => {
+      const ms = Math.round(request.timing().responseEnd);
+      const label = started.get(request);
+      started.delete(request);
+      if (ms < 0) return;
+      if (label) {
+        summary.apiRequests += 1;
+        if (!summary.slowestApi || ms > summary.slowestApi.ms) summary.slowestApi = { request: label, ms };
+      } else if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        summary.documents += 1;
+        summary.slowestDocumentMs = Math.max(summary.slowestDocumentMs, ms);
+      }
+    });
+    page.on("requestfailed", (request) => started.delete(request));
+    await provide();
+    summary.unfinishedApi = [...started.values()];
+    testInfo.annotations.push({ type: "timings", description: JSON.stringify(summary) });
+  }, { auto: true }],
+  // How long this engine takes to start on this machine: one extra launch per worker, written to test-results/metrics.
+  launchProbe: [async ({ playwright, browserName }, provide, workerInfo) => {
+    const begin = performance.now();
+    const probe = await playwright[browserName].launch();
+    const launchMs = Math.round(performance.now() - begin);
+    await probe.close();
+    mkdirSync(path.join("test-results", "metrics"), { recursive: true });
+    writeFileSync(
+      path.join("test-results", "metrics", `launch-${workerInfo.project.name}-${workerInfo.workerIndex}.json`),
+      JSON.stringify({ project: workerInfo.project.name, worker: workerInfo.workerIndex, launchMs }),
+    );
+    await provide();
+  }, { scope: "worker", auto: true }],
   problems: async ({ page }, provide) => {
     const problems: PageProblems = { consoleErrors: [], failedRequests: [] };
     page.on("console", (message) => {

@@ -92,8 +92,9 @@ test.describe("accessibility and layout", () => {
     const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, customer);
     await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
     // 1366×900 at 200 % zoom is a 683×450 CSS viewport; WCAG 1.4.10 reflow is 320 CSS px wide;
-    // 375 and 768 are the small-phone and tablet widths of the Phase 6 layout review.
-    for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }, { width: 375, height: 667 }, { width: 768, height: 1024 }]) {
+    // 375 and 768 are the small-phone and tablet widths of the Phase 6 layout review; 1024 and 1280
+    // the small-laptop widths (1280 is where the header switches to its full navigation).
+    for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }, { width: 375, height: 667 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1280, height: 800 }]) {
       await page.setViewportSize(viewport);
       for (const path of ["/", "/products?sort=name-asc", `/products/${PRODUCTS.sunglasses.id}`, "/cart", "/checkout", "/orders", `/orders/${orderId}`, `/tracking?orderId=${orderId}&productId=${PRODUCTS.sunhat.id}`, "/account"]) {
         await page.goto(path);
@@ -149,7 +150,7 @@ test.describe("accessibility and layout", () => {
     }
   });
 
-  test("admin pages reflow at 320, 375 and 768 px and at 200 % zoom (Chromium)", async ({ page, browserName }, testInfo) => {
+  test("admin pages reflow at 320, 375, 768, 1024 and 1280 px and at 200 % zoom (Chromium)", async ({ page, browserName }, testInfo) => {
     test.skip(browserName !== "chromium" || testInfo.project.name !== "chromium-desktop", "one desktop engine is enough: zoom is emulated by the CSS viewport");
     const shopper = newCustomer("Reflow");
     const csrf = await signInThroughApi(page.request, shopper);
@@ -157,7 +158,7 @@ test.describe("accessibility and layout", () => {
     await page.context().clearCookies();
     await signInAsAdmin(page.request);
     const paths = ["/admin", "/admin/products", "/admin/products/new", `/admin/products/${PRODUCTS.shoes.id}`, "/admin/orders", `/admin/orders/${orderId}`];
-    for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 683, height: 450 }, { width: 768, height: 1024 }]) {
+    for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 683, height: 450 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1280, height: 800 }]) {
       await page.setViewportSize(viewport);
       for (const path of paths) {
         await page.goto(path);
