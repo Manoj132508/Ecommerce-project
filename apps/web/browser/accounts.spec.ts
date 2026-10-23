@@ -54,13 +54,13 @@ test.describe("accounts", () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
-  test("keyboard: skip-free tab order reaches search and sign-in with a visible focus ring", async ({ page, browserName }) => {
+  test("keyboard: skip link first, then search and sign-in, each with a visible focus ring", async ({ page, browserName }) => {
     test.skip(browserName === "webkit", "WebKit does not Tab to links by default (macOS/Safari preference); covered in Chromium and Firefox");
     await page.goto("/");
     // The session area renders after hydration; tab once it is there.
     await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
     const reached: string[] = [];
-    for (let step = 0; step < 4; step += 1) {
+    for (let step = 0; step < 5; step += 1) {
       await page.keyboard.press("Tab");
       const focused = await page.evaluate(() => {
         const element = document.activeElement as HTMLElement | null;
@@ -74,7 +74,15 @@ test.describe("accounts", () => {
       expect(focused?.ring, `focus ring on ${focused?.label}`).toBe(true);
       reached.push(focused?.label ?? "");
     }
-    // First the store name (from NEXT_PUBLIC_APP_NAME), then:
-    expect(reached.slice(1)).toEqual(["Search products", "Search", "Sign in"]);
+    // The skip link, the store name (from NEXT_PUBLIC_APP_NAME), then:
+    expect(reached[0]).toBe("Skip to content");
+    expect(reached.slice(2)).toEqual(["Search products", "Search", "Sign in"]);
+
+    // The skip link moves keyboard focus past the header to the page content.
+    await page.goto("/");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#main-content")).toBeFocused();
   });
 });

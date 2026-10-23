@@ -347,7 +347,7 @@ describe("add to cart", () => {
   test("signed in: sends the quantity with the CSRF token and confirms", async () => {
     const { requests } = fakeApi({ "POST /api/cart-items": { status: 201, body: { productId: PRODUCT_ID, quantity: 3 } } });
     const { user } = renderWithProviders(controls, { session: SESSION });
-    await user.selectOptions(screen.getByLabelText("Quantity:"), "3");
+    await user.selectOptions(screen.getByLabelText("Quantity"), "3");
     await user.click(screen.getByRole("button", { name: "Add to Cart" }));
     expect(await screen.findByText("Added 3 to your cart")).toBeInTheDocument();
     expect(requests).toEqual([expect.objectContaining({ method: "POST", path: "/api/cart-items", body: { productId: PRODUCT_ID, quantity: 3 }, headers: expect.objectContaining({ "x-csrf-token": SESSION.csrfToken }) })]);
@@ -365,7 +365,7 @@ describe("add to cart", () => {
   test("other errors are shown; quantities are 1-10; keyboard operable", async () => {
     fakeApi({ "POST /api/cart-items": { status: 404, body: { message: "Product not found" } } });
     const { user } = renderWithProviders(controls, { session: SESSION });
-    const select = screen.getByLabelText("Quantity:");
+    const select = screen.getByLabelText("Quantity");
     expect([...select.querySelectorAll("option")].map((option) => option.value)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     await user.tab();
     expect(select).toHaveFocus();

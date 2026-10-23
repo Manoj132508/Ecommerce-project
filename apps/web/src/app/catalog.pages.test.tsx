@@ -39,7 +39,7 @@ describe("home page", () => {
 
     const photo = within(card).getByAltText("Bath Towel Set");
     expect(photo).toHaveAttribute("src", "/images/products/bath-towel-set-gray-rosewood.jpg");
-    expect(photo).toHaveAttribute("data-sizes", expect.stringContaining("180px"));
+    expect(photo).toHaveAttribute("data-sizes", expect.stringContaining("220px"));
     expect(photo).toHaveAttribute("data-unoptimized", "false");
   });
 
@@ -98,7 +98,7 @@ describe("/products/[productId]", () => {
     expect(screen.getByAltText("5 out of 5 stars")).toHaveAttribute("src", "/images/ratings/rating-50.png");
     expect(screen.getByRole("heading", { name: "About this product" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Product highlights" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Quantity:")).toHaveValue("1");
+    expect(screen.getByLabelText("Quantity")).toHaveValue("1");
     expect(screen.getByAltText("Espresso Maker")).toHaveAttribute("data-preload", "true");
     expect(screen.getByRole("link", { name: /Back to products/ })).toHaveAttribute("href", "/products");
 

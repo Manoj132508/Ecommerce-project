@@ -91,6 +91,15 @@ export async function signInThroughApi(request: APIRequestContext, customer: Cus
   return (await session.json()).csrfToken as string;
 }
 
+/** A new account promoted to administrator in the test database, signed in through the API. */
+export async function signInAsAdmin(request: APIRequestContext): Promise<Customer> {
+  const admin = newCustomer("Admin");
+  expect((await request.post("/api/auth/accounts", { headers: { Origin: baseURL() }, data: admin })).status()).toBe(201);
+  await testDatabase((query) => query("UPDATE users SET is_admin = true WHERE email = $1", [admin.email]));
+  await signInThroughApi(request, admin, { register: false });
+  return admin;
+}
+
 /** Places an order through the API for a signed-in context; returns its id. */
 export async function placeOrderThroughApi(request: APIRequestContext, csrfToken: string, productId: string, customer: Customer) {
   const headers = { Origin: baseURL(), "X-CSRF-Token": csrfToken };

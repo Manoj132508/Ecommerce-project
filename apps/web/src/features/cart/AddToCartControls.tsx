@@ -1,19 +1,22 @@
 "use client";
 
-// Limited cart integration for the product pages: add a product to the
-// signed-in user's cart. The cart and checkout pages move to Next.js in the
-// next stage.
+// Add a product to the signed-in user's cart from the catalogue and product
+// pages (signed-out visitors are sent to sign in and brought back).
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { CartIcon } from "@/components/ui/icons";
 import { endLocalSession, useSession } from "@/features/auth/hooks";
 import { NOTICES } from "@/features/auth/notices";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { cartQueryRoot, checkoutQueryRoot } from "@/lib/queryKeys";
 import { refetchAfterWrite } from "@/lib/refetchAfterWrite";
 import { safeReturnPath } from "@/lib/returnPath";
+import { cn } from "@/lib/utils";
 import { useAppDispatch } from "@/store/hooks";
 import { noticeShown } from "@/store/uiSlice";
+import { QuantitySelector } from "./QuantitySelector";
 
 interface AddToCartControlsProps {
   productId: string;
@@ -22,9 +25,6 @@ interface AddToCartControlsProps {
   returnTo: string;
   compact?: boolean;
 }
-
-/** Quantities the API accepts (FD1: whole numbers 1 to 10). */
-const QUANTITIES = Array.from({ length: 10 }, (_, index) => index + 1);
 
 export function AddToCartControls({ productId, productName, returnTo, compact = false }: AddToCartControlsProps) {
   const session = useSession();
@@ -72,33 +72,34 @@ export function AddToCartControls({ productId, productName, returnTo, compact = 
   const failure = add.isError && !(add.error instanceof ApiError && add.error.status === 401) ? add.error.message : "";
 
   return (
-    <div className={`flex flex-col ${compact ? "gap-2" : "gap-3"}`}>
-      <div className="flex items-center gap-2">
-        <label htmlFor={selectId} className={compact ? "sr-only" : "font-semibold"}>
-          Quantity{compact ? ` for ${productName}` : ":"}
+    <div className={cn("flex flex-col", compact ? "gap-2" : "gap-3")}>
+      <div className={cn("flex items-center", compact ? "gap-2" : "gap-3")}>
+        <label htmlFor={selectId} className={compact ? "sr-only" : "text-sm font-medium"}>
+          Quantity{compact ? ` for ${productName}` : ""}
         </label>
-        <select
+        <QuantitySelector
           id={selectId}
           value={quantity}
-          onChange={(event) => { setQuantity(Number(event.target.value)); setAdded(false); }}
-          className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1"
-        >
-          {QUANTITIES.map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
+          onChange={(value) => { setQuantity(value); setAdded(false); }}
+          className={compact ? "min-h-10 w-16 px-2 lg:min-h-9" : "w-24"}
+        />
       </div>
-      <p aria-live="polite" className={`min-h-6 text-[#198754] ${compact ? "text-sm" : ""}`}>
-        {added ? `Added ${quantity} to your cart` : ""}
-      </p>
-      {failure && <p role="alert" className="text-sm text-red-700">{failure}</p>}
-      <button
-        type="button"
+      {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
+      <Button
         onClick={onAdd}
         disabled={add.isPending || session.isPending}
+        aria-busy={add.isPending || undefined}
         aria-label={compact ? `Add ${productName} to cart` : undefined}
-        className={`rounded-full bg-[#ffd814] font-semibold text-[#0f1111] hover:bg-[#f7ca00] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#198754] disabled:opacity-60 ${compact ? "w-full px-3 py-2 text-sm" : "w-full px-6 py-3 sm:max-w-sm"}`}
+        size={compact ? "default" : "lg"}
+        className={cn("w-full", compact ? "px-3" : "sm:max-w-sm")}
       >
+        <CartIcon className="size-4" />
         {add.isPending ? "Adding…" : "Add to Cart"}
-      </button>
+      </Button>
+      {/* Space is kept for the confirmation so the card does not change height. */}
+      <p aria-live="polite" className={cn("font-medium text-primary", compact ? "min-h-5 text-sm" : "min-h-6")}>
+        {added ? `Added ${quantity} to your cart` : ""}
+      </p>
     </div>
   );
 }

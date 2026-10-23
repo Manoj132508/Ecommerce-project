@@ -54,7 +54,7 @@ test.describe("catalogue", () => {
     await expect(page).toHaveURL(`/products/${PRODUCTS.sunglasses.id}`);
     await expect(page.getByRole("heading", { level: 1, name: PRODUCTS.sunglasses.name })).toBeVisible();
     await expect(page.getByRole("img", { name: PRODUCTS.sunglasses.name })).toBeVisible();
-    await expect(page.getByLabel("Quantity:")).toHaveValue("1");
+    await expect(page.getByLabel("Quantity", { exact: true })).toHaveValue("1");
     await expectNoHorizontalScroll(page);
 
     const missing = await page.goto("/products/00000000-0000-4000-8000-000000000000");

@@ -1,8 +1,108 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens (Phase 6A, docs/PHASE6_REDESIGN_SPEC.md §2). Every colour the
+ * UI uses comes from here; components refer to the Tailwind names below
+ * (bg-primary, text-muted-foreground, border-border …), never to hex values.
+ * Contrast ratios (WCAG) are listed in the spec. Light theme only: dark mode
+ * is deferred (P6).
+ */
+:root {
+  --background: #ffffff;
+  --foreground: #0f1a14;
+  --surface: #f6f7f6;
+  --card: #ffffff;
+  --card-foreground: #0f1a14;
+  --muted: #f6f7f6;
+  --muted-foreground: #56635b;
+  --border: #e1e6e2;
+  --input: #7b8780;
+  --brand: #084f2d;
+  --brand-foreground: #ffffff;
+  --primary: #16794a;
+  --primary-hover: #126339;
+  --primary-foreground: #ffffff;
+  --secondary: #eef2ef;
+  --secondary-foreground: #0f1a14;
+  --accent: #e8f5ee;
+  --accent-foreground: #0b5a35;
+  --destructive: #b42318;
+  --destructive-hover: #912018;
+  --destructive-foreground: #ffffff;
+  --success: #e8f5ee;
+  --success-foreground: #0b5a35;
+  --warning: #fff7e0;
+  --warning-foreground: #7a4a00;
+  --ring: #16794a;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-hover: var(--destructive-hover);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ring: var(--ring);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg);
+  /* Inter is self-hosted by next/font (layout.tsx sets --font-inter). */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/*
+ * One focus indicator everywhere: a 2 px outline (not a box-shadow, which
+ * forced-colours mode removes). Areas on a dark background set --ring to white.
+ */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
 @layer base {
+  /* Tailwind 4 draws a bare `border` in currentColor (black); use the token, as shadcn/ui does. */
+  *, ::before, ::after {
+    border-color: var(--border);
+  }
+  /* Field boundaries need 3:1 against the page (WCAG 1.4.11). */
+  input, select, textarea {
+    border-color: var(--input);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
-    @apply bg-white text-slate-900 antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  /* Keyboard focus is always visible, also on elements without the utility. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
 
@@ -15,5 +115,14 @@
 @media (forced-colors: active) {
   button, input, select, textarea {
     border: 1px solid ButtonText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -1,5 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, expectNoHorizontalScroll, newCustomer, placeOrderThroughApi, PRODUCTS, settle, signInThroughApi, snapshot, test } from "./support";
+import {
+  expect, expectNoHorizontalScroll, isCompact, newCustomer, placeOrderThroughApi, PRODUCTS, settle, signInAsAdmin, signInThroughApi, snapshot, test,
+} from "./support";
 
 // Automated WCAG 2.1 A/AA rules (axe-core). They find a subset of problems
 // only; they do not replace a keyboard pass or a screen-reader test.
@@ -73,8 +75,9 @@ test.describe("accessibility and layout", () => {
     const customer = newCustomer("Zoom");
     const csrf = await signInThroughApi(page.request, customer);
     await page.request.post("/api/cart-items", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "", "X-CSRF-Token": csrf }, data: { productId: PRODUCTS.shoes.id, quantity: 1 } });
-    // 1366×900 at 200 % zoom is a 683×450 CSS viewport; WCAG 1.4.10 reflow is 320 CSS px wide.
-    for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }]) {
+    // 1366×900 at 200 % zoom is a 683×450 CSS viewport; WCAG 1.4.10 reflow is 320 CSS px wide;
+    // 375 and 768 are the small-phone and tablet widths of the Phase 6 layout review.
+    for (const viewport of [{ width: 683, height: 450 }, { width: 320, height: 568 }, { width: 375, height: 667 }, { width: 768, height: 1024 }]) {
       await page.setViewportSize(viewport);
       for (const path of ["/", `/products/${PRODUCTS.shoes.id}`, "/cart", "/checkout", "/orders", "/account"]) {
         await page.goto(path);
@@ -87,6 +90,52 @@ test.describe("accessibility and layout", () => {
       await page.getByRole("button", { name: "Review order" }).scrollIntoViewIfNeeded();
       await expect(page.getByRole("button", { name: "Review order" })).toBeInViewport();
     }
+  });
+
+  test("admin pages reflow at 320, 375 and 768 px and at 200 % zoom (Chromium)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium" || testInfo.project.name !== "chromium-desktop", "one desktop engine is enough: zoom is emulated by the CSS viewport");
+    const shopper = newCustomer("Reflow");
+    const csrf = await signInThroughApi(page.request, shopper);
+    const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, shopper);
+    await page.context().clearCookies();
+    await signInAsAdmin(page.request);
+    const paths = ["/admin", "/admin/products", "/admin/products/new", `/admin/products/${PRODUCTS.shoes.id}`, "/admin/orders", `/admin/orders/${orderId}`];
+    for (const viewport of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 683, height: 450 }, { width: 768, height: 1024 }]) {
+      await page.setViewportSize(viewport);
+      for (const path of paths) {
+        await page.goto(path);
+        await settle(page);
+        await expectNoHorizontalScroll(page);
+      }
+    }
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto(`/admin/orders/${orderId}`);
+    await settle(page);
+    await snapshot(page, testInfo.project.name, "32-reflow-320-admin-order");
+  });
+
+  test("signed-in header: mobile menu opens as a panel, Escape closes it and returns focus; footer is present", async ({ page }, testInfo) => {
+    await signInThroughApi(page.request, newCustomer("Header"));
+    await page.goto("/");
+    await settle(page);
+    await expect(page.getByRole("contentinfo")).toContainText("No payment provider is connected");
+    await expect(page.getByRole("navigation", { name: "Shop" }).getByRole("link", { name: "All products" })).toHaveAttribute("href", "/products");
+    if (!isCompact(page)) {
+      await expect(page.getByRole("link", { name: "Cart (0)" })).toBeVisible();
+      await snapshot(page, testInfo.project.name, "03-header-signed-in");
+      return;
+    }
+    const menu = page.getByRole("button", { name: "Menu (0)" });
+    await menu.click();
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
+    const panel = page.locator("#mobile-navigation");
+    await expect(panel.getByRole("link", { name: "Orders" })).toBeVisible();
+    await expectNoHorizontalScroll(page);
+    await snapshot(page, testInfo.project.name, "03-header-menu-open");
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(menu).toBeFocused();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
   test("Windows high contrast (forced colours): every button and field keeps a visible border (Chromium)", async ({ page, browserName }, testInfo) => {

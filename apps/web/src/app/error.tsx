@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { Button } from "@/components/ui/button";
 
 // Route-level error boundary. Shows no error details to the visitor.
 export default function RouteError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
@@ -9,12 +11,8 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
   }, [error]);
 
   return (
-    <div role="alert" className="flex flex-col items-start gap-3">
-      <h1 className="text-xl font-semibold">Something went wrong</h1>
-      <p className="text-slate-600">Please try again.</p>
-      <button type="button" onClick={reset} className="rounded-md bg-slate-900 px-4 py-2 text-white">
-        Try again
-      </button>
-    </div>
+    <EmptyState role="alert" headingLevel={1} title="Something went wrong" action={<Button onClick={reset}>Try again</Button>}>
+      <p>Please try again.</p>
+    </EmptyState>
   );
 }

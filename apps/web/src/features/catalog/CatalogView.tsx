@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ProductGrid } from "./ProductCard";
 import { categoriesOf, filterProducts, type Product } from "./product";
 
@@ -19,6 +22,14 @@ function hrefFor(basePath: string, query: string, category: string) {
   return search ? `${basePath}?${search}` : basePath;
 }
 
+/** Category chip; the current one is filled and marked aria-current (not colour alone: also bold). */
+function chipClass(current: boolean) {
+  return cn(
+    "focus-ring inline-flex min-h-11 items-center rounded-full border px-4 text-sm lg:min-h-9",
+    current ? "border-brand bg-brand font-semibold text-brand-foreground" : "border-border bg-background hover:border-primary hover:bg-accent",
+  );
+}
+
 /** Product listing with search (?q=) and category filter (?category=), rendered on the server. */
 export function CatalogView({ products, query, category, basePath, heading }: CatalogViewProps) {
   const visible = filterProducts(products, { query, category });
@@ -26,20 +37,20 @@ export function CatalogView({ products, query, category, basePath, heading }: Ca
   const returnTo = hrefFor(basePath, query, category);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
-        <h1 className="text-2xl font-bold">{heading}</h1>
-        <p className="text-sm text-slate-600" role="status">
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{heading}</h1>
+        <p className="text-sm text-muted-foreground" role="status">
           {query ? `${visible.length} result${visible.length === 1 ? "" : "s"} for “${query}”` : `${visible.length} product${visible.length === 1 ? "" : "s"}`}
         </p>
       </div>
 
       {categories.length > 0 && (
-        <nav aria-label="Categories" className="flex flex-wrap gap-2 px-1">
+        <nav aria-label="Categories" className="flex flex-wrap gap-2">
           <Link
             href={hrefFor(basePath, query, "")}
             aria-current={category ? undefined : "page"}
-            className={`rounded-full border px-3 py-1 text-sm ${category ? "border-slate-300 hover:bg-slate-100" : "border-[#084f2d] bg-[#084f2d] text-white"}`}
+            className={chipClass(!category)}
           >
             All
           </Link>
@@ -50,7 +61,7 @@ export function CatalogView({ products, query, category, basePath, heading }: Ca
                 key={name}
                 href={hrefFor(basePath, query, name)}
                 aria-current={active ? "page" : undefined}
-                className={`rounded-full border px-3 py-1 text-sm ${active ? "border-[#084f2d] bg-[#084f2d] text-white" : "border-slate-300 hover:bg-slate-100"}`}
+                className={chipClass(active)}
               >
                 {name}
               </Link>
@@ -62,10 +73,9 @@ export function CatalogView({ products, query, category, basePath, heading }: Ca
       {visible.length > 0 ? (
         <ProductGrid products={visible} returnTo={returnTo} />
       ) : (
-        <p className="p-8 text-center">
-          No products match your search.{" "}
-          <Link href={basePath} className="font-medium text-[#198754] underline underline-offset-4">Show all products</Link>
-        </p>
+        <EmptyState title="No products found" action={<Link href={basePath} className={buttonVariants({ variant: "outline" })}>Show all products</Link>}>
+          <p>No products match your search.</p>
+        </EmptyState>
       )}
     </div>
   );

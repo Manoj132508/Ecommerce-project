@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
+import { buttonVariants } from "@/components/ui/button";
+import { CloseIcon } from "@/components/ui/icons";
+import { cn } from "@/lib/utils";
 import { formatMoney } from "@/features/catalog/product";
 import { useCartQuery, useCheckoutQuery } from "./hooks";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -59,45 +62,45 @@ export function CartDrawer() {
   return (
     <div className="fixed inset-0 z-50" role="presentation">
       <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 bg-black/45" onClick={() => dispatch(cartDrawerClosed())} />
-      <aside ref={panel} role="dialog" aria-modal="true" aria-labelledby="cart-drawer-title" className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white text-slate-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 id="cart-drawer-title" className="text-xl font-bold">Your cart</h2>
-          <button ref={closeButton} type="button" onClick={() => dispatch(cartDrawerClosed())} className="rounded px-3 py-2 font-semibold hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-[#198754]">Close</button>
+      <aside ref={panel} role="dialog" aria-modal="true" aria-labelledby="cart-drawer-title" className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-background text-foreground shadow-lg sm:rounded-l-lg">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 id="cart-drawer-title" className="text-xl font-semibold">Your cart</h2>
+          <button ref={closeButton} type="button" onClick={() => dispatch(cartDrawerClosed())} className={buttonVariants({ variant: "ghost" })}><CloseIcon />Close</button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">
-          {cart.isPending && <p>Loading your cart…</p>}
-          {cart.isError && <p role="alert" className="text-red-700">{cart.error.message}</p>}
+          {cart.isPending && <p className="text-muted-foreground">Loading your cart…</p>}
+          {cart.isError && <p role="alert" className="text-destructive">{cart.error.message}</p>}
           {!cart.isPending && !cart.isError && items.length === 0 && (
             <div className="py-12 text-center">
               <p className="mb-4 text-lg font-semibold">Your cart is empty.</p>
-              <Link href="/products" onClick={() => dispatch(cartDrawerClosed())} className="font-semibold text-[#08783e] underline">Browse products</Link>
+              <Link href="/products" onClick={() => dispatch(cartDrawerClosed())} className={buttonVariants({ variant: "outline" })}>Browse products</Link>
             </div>
           )}
           <ul className="space-y-4">
             {items.map((item) => (
-              <li key={item.productId} className="border-b pb-4">
+              <li key={item.productId} className="border-b border-border pb-4">
                 <p className="font-semibold">{item.product?.name ?? "Product no longer available"}</p>
-                <div className="mt-1 flex justify-between text-sm text-slate-600">
+                <div className="mt-1 flex justify-between text-sm text-muted-foreground">
                   <span>Quantity: {item.quantity}</span>
-                  {item.product && <span>{formatMoney(item.product.priceCents * item.quantity)}</span>}
+                  {item.product && <span className="tabular-nums">{formatMoney(item.product.priceCents * item.quantity)}</span>}
                 </div>
-                {item.unavailable && <p className="mt-2 text-sm font-medium text-red-700">Remove this unavailable item before checkout.</p>}
+                {item.unavailable && <p className="mt-2 text-sm font-medium text-destructive">Remove this unavailable item before checkout.</p>}
               </li>
             ))}
           </ul>
         </div>
         {items.length > 0 && (
-          <div className="border-t p-5">
-            <div className="mb-4 flex justify-between text-lg font-bold">
+          <div className="border-t border-border bg-surface p-5">
+            <div className="mb-4 flex justify-between text-lg font-semibold">
               <span>Order total</span>
-              <span>{checkout.data ? formatMoney(checkout.data.paymentSummary.totalCostCents) : "—"}</span>
+              <span className="tabular-nums">{checkout.data ? formatMoney(checkout.data.paymentSummary.totalCostCents) : "—"}</span>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Link href="/cart" onClick={() => dispatch(cartDrawerClosed())} className="rounded border border-[#198754] px-4 py-3 text-center font-semibold text-[#08783e] hover:bg-green-50">View cart</Link>
+              <Link href="/cart" onClick={() => dispatch(cartDrawerClosed())} className={buttonVariants({ variant: "outline", size: "lg" })}>View cart</Link>
               {invalid ? (
-                <span aria-disabled="true" className="rounded bg-slate-300 px-4 py-3 text-center font-semibold text-slate-600">Checkout blocked</span>
+                <span aria-disabled="true" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "text-muted-foreground")}>Checkout blocked</span>
               ) : (
-                <Link href="/checkout" onClick={() => dispatch(cartDrawerClosed())} className="rounded bg-[#198754] px-4 py-3 text-center font-semibold text-white hover:bg-[#126c45]">Checkout</Link>
+                <Link href="/checkout" onClick={() => dispatch(cartDrawerClosed())} className={buttonVariants({ size: "lg" })}>Checkout</Link>
               )}
             </div>
           </div>

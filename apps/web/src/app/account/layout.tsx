@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { NarrowContent } from "@/components/layout/Container";
+import { SectionNav } from "@/components/layout/SectionNav";
 import { getServerSessionUser } from "@/lib/server/session";
 
 export const metadata: Metadata = { robots: { index: false } };
@@ -15,14 +16,18 @@ export default async function AccountLayout({ children }: { children: ReactNode 
   if (!user) redirect("/login?from=%2Faccount");
 
   return (
-    <div className="grid gap-6 md:grid-cols-[200px_1fr]">
-      <nav aria-label="Account sections" className="flex flex-wrap gap-2 md:flex-col">
-        <Link href="/account" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Profile</Link>
-        <Link href="/orders" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Orders</Link>
-        <Link href="/cart" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Cart</Link>
-        <Link href="/checkout" className="rounded-md px-3 py-2 font-medium hover:bg-slate-100">Checkout</Link>
-      </nav>
-      <section>{children}</section>
-    </div>
+    <NarrowContent className="grid gap-6 md:grid-cols-[200px_1fr]">
+      <SectionNav
+        label="Account sections"
+        orientation="responsive"
+        items={[
+          { href: "/account", label: "Profile" },
+          { href: "/orders", label: "Orders" },
+          { href: "/cart", label: "Cart" },
+          { href: "/checkout", label: "Checkout" },
+        ]}
+      />
+      <section className="min-w-0">{children}</section>
+    </NarrowContent>
   );
 }

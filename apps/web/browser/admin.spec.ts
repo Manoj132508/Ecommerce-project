@@ -1,22 +1,14 @@
 import AxeBuilder from "@axe-core/playwright";
 import { randomUUID } from "node:crypto";
 import {
-  expect, expectCleanPage, expectNoHorizontalScroll, isCompact, newCustomer, placeOrderThroughApi, PRODUCTS, settle, signInThroughApi, snapshot, test, testDatabase,
-  type Customer,
+  expect, expectCleanPage, expectNoHorizontalScroll, isCompact, newCustomer, placeOrderThroughApi, PRODUCTS, settle, signInAsAdmin, signInThroughApi, snapshot, test,
+  testDatabase,
 } from "./support";
 
 async function expectNoSeriousAxeViolations(page: Parameters<typeof settle>[0]) {
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(results.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")
     .map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(" ")).join(", ")}`)).toEqual([]);
-}
-
-async function signInAsAdmin(request: Parameters<typeof signInThroughApi>[0]): Promise<Customer> {
-  const admin = newCustomer("Admin");
-  expect((await request.post("/api/auth/accounts", { headers: { Origin: process.env.BROWSER_E2E_BASE_URL ?? "" }, data: admin })).status()).toBe(201);
-  await testDatabase((query) => query("UPDATE users SET is_admin = true WHERE email = $1", [admin.email]));
-  await signInThroughApi(request, admin, { register: false });
-  return admin;
 }
 
 test.describe("admin", () => {

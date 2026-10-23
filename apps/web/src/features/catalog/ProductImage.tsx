@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { cn } from "@/lib/utils";
 import { productImageSource, ratingImageSource, type Product } from "./product";
 
 interface ProductImageProps {
@@ -19,13 +20,13 @@ export function ProductImage({ product, sizes, preload = false, className = "" }
   const source = productImageSource(product.image);
   if (!source) {
     return (
-      <div className={`flex aspect-square items-center justify-center rounded bg-slate-100 text-sm text-slate-500 ${className}`}>
+      <div className={cn("flex aspect-square items-center justify-center rounded-sm bg-secondary text-sm text-muted-foreground", className)}>
         Image unavailable
       </div>
     );
   }
   return (
-    <div className={`relative aspect-square ${className}`}>
+    <div className={cn("relative aspect-square", className)}>
       <Image
         src={source.src}
         alt={product.name}
@@ -33,7 +34,7 @@ export function ProductImage({ product, sizes, preload = false, className = "" }
         sizes={sizes}
         preload={preload}
         unoptimized={!source.local}
-        className="rounded object-contain"
+        className="rounded-sm object-contain"
       />
     </div>
   );
@@ -44,7 +45,7 @@ export function RatingStars({ stars, count, label = "" }: { stars: number; count
   return (
     <div className="flex items-center gap-2">
       <Image src={ratingImageSource(stars)} alt={`${stars} out of 5 stars`} width={100} height={20} />
-      <span className="text-sm text-[#198754]">{count}{label}</span>
+      <span className="text-sm tabular-nums text-muted-foreground">{count}{label}</span>
     </div>
   );
 }

@@ -33,7 +33,7 @@ test.describe("cart, checkout and orders", () => {
     const project = testInfo.project.name;
 
     await page.goto(`/products/${PRODUCTS.sunhat.id}`);
-    await page.getByLabel("Quantity:").selectOption("2");
+    await page.getByLabel("Quantity", { exact: true }).selectOption("2");
     await page.getByRole("button", { name: "Add to Cart" }).click();
     await expectCartCount(page, 2);
     await snapshot(page, project, "02-product");
@@ -66,7 +66,7 @@ test.describe("cart, checkout and orders", () => {
     await page.getByLabel("Postal code").fill("N1 1AA");
     await page.getByRole("button", { name: "Review order" }).click();
     await expect(page.getByRole("heading", { name: "Final review" })).toBeVisible();
-    await expect(page.getByText(/No payment provider is connected/)).toBeVisible();
+    await expect(page.getByRole("main").getByText(/No payment provider is connected/)).toBeVisible();
     await snapshot(page, project, "05-checkout-review");
 
     await page.getByRole("button", { name: "Confirm and place order" }).click();

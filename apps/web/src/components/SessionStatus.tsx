@@ -3,18 +3,25 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { CartIcon, CloseIcon, MenuIcon, PanelIcon } from "@/components/ui/icons";
 import { useSession, useSignOut } from "@/features/auth/hooks";
 import { useCartQuery } from "@/features/cart/hooks";
 import { CartDrawer } from "@/features/cart/CartDrawer";
 import { useHydrated } from "@/hooks/useHydrated";
 import { safeReturnPath } from "@/lib/returnPath";
+import { cn } from "@/lib/utils";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { cartDrawerOpened, menuClosed, menuToggled } from "@/store/uiSlice";
 
-const linkClass = "rounded px-3 py-2 font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white";
+// The header sets --ring to white, so focus rings stay visible on the brand colour.
+const linkClass = buttonVariants({ variant: "inverse" });
+const menuLinkClass = cn(buttonVariants({ variant: "inverse" }), "w-full justify-start text-base");
+const cartLinkClass = cn(buttonVariants({ variant: "secondary" }), "text-brand");
 
 export function SessionStatusPlaceholder() {
-  return <span className="px-3 text-sm text-white/70">…</span>;
+  return <span className="inline-flex min-h-11 items-center px-3 text-sm text-white/80 lg:min-h-10">…</span>;
 }
 
 export function SessionStatus() {
@@ -54,7 +61,7 @@ export function SessionStatus() {
     return (
       <nav aria-label="Main navigation" className="flex items-center gap-1">
         <Link href={`/login${from}`} className={linkClass}>Sign in</Link>
-        <Link href={`/register${from}`} className={linkClass}>Register</Link>
+        <Link href={`/register${from}`} className={cartLinkClass}>Register</Link>
       </nav>
     );
   }
@@ -63,48 +70,73 @@ export function SessionStatus() {
 
   return (
     <>
-      <nav aria-label="Main navigation" className="relative flex items-center gap-1 text-sm sm:text-base">
+      <nav aria-label="Main navigation" className="flex items-center gap-1">
         <div className="hidden items-center gap-1 xl:flex">
-          <Link href="/cart" className={linkClass}>Cart ({totalQuantity})</Link>
+          <Link href="/orders" className={linkClass}>Orders</Link>
+          {session.data.user.isAdmin && <Link href="/admin" className={linkClass}>Admin</Link>}
+          <Link href="/account" className={cn(linkClass, "max-w-40")}><span className="truncate">{session.data.user.name}</span></Link>
+          <Link href="/checkout" className={linkClass}>Checkout</Link>
           <button
             type="button"
             // Safari does not focus a clicked button; the drawer returns focus to it on close.
             onClick={(event) => { event.currentTarget.focus(); dispatch(cartDrawerOpened()); }}
-            className={linkClass}
+            className={buttonVariants({ variant: "inverse", size: "icon" })}
             aria-label={`Open cart drawer with ${totalQuantity} items`}
+            title="Cart preview"
           >
-            Preview
+            <PanelIcon />
           </button>
-          <Link href="/checkout" className={linkClass}>Checkout</Link>
-          <Link href="/orders" className={linkClass}>Orders</Link>
-          {session.data.user.isAdmin && <Link href="/admin" className={linkClass}>Admin</Link>}
-          <Link href="/account" className={`${linkClass} max-w-40 truncate`}>{session.data.user.name}</Link>
+          <Link href="/cart" aria-label={`Cart (${totalQuantity})`} className={cartLinkClass}>
+            <CartIcon />
+            Cart
+            <Badge aria-hidden="true" className="min-w-5">{totalQuantity}</Badge>
+          </Link>
           <button
             type="button"
             onClick={signOutAndRefresh}
             disabled={signOut.isPending}
-            className="rounded bg-red-600 px-3 py-2 font-semibold hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60"
+            className={cn(linkClass, "border border-white/50")}
           >
             Sign out
           </button>
         </div>
-        <button ref={menuButton} type="button" onClick={() => dispatch(menuToggled())} aria-expanded={menuOpen} aria-controls="mobile-navigation" className="rounded border border-white/70 px-3 py-2 font-semibold xl:hidden">Menu ({totalQuantity})</button>
+        <button
+          ref={menuButton}
+          type="button"
+          onClick={() => dispatch(menuToggled())}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-navigation"
+          aria-label={`Menu (${totalQuantity})`}
+          className={cn(linkClass, "border border-white/50 xl:hidden")}
+        >
+          {menuOpen ? <CloseIcon /> : <MenuIcon />}
+          Menu
+          <Badge variant="inverse" aria-hidden="true" className="min-w-5">{totalQuantity}</Badge>
+        </button>
         {menuOpen && (
-          <div id="mobile-navigation" className="absolute right-0 top-full z-40 mt-2 grid w-52 gap-1 rounded bg-[#084f2d] p-2 shadow-xl xl:hidden">
-            <Link href="/cart" onClick={() => dispatch(menuClosed())} className={linkClass}>Cart ({totalQuantity})</Link>
-            <button
-              type="button"
-              // The menu closes, so the drawer returns focus to the Menu button.
-              onClick={() => { menuButton.current?.focus(); dispatch(menuClosed()); dispatch(cartDrawerOpened()); }}
-              className={`${linkClass} text-left`}
-            >
-              Cart preview
-            </button>
-            <Link href="/checkout" onClick={() => dispatch(menuClosed())} className={linkClass}>Checkout</Link>
-            <Link href="/orders" onClick={() => dispatch(menuClosed())} className={linkClass}>Orders</Link>
-            {session.data.user.isAdmin && <Link href="/admin" onClick={() => dispatch(menuClosed())} className={linkClass}>Admin</Link>}
-            <Link href="/account" onClick={() => dispatch(menuClosed())} className={linkClass}>Account</Link>
-            <button type="button" onClick={signOutAndRefresh} className="rounded bg-red-600 px-3 py-2 text-left font-semibold">Sign out</button>
+          // A disclosure panel under the header (not a modal): Escape or the
+          // Menu button closes it and focus returns to the button.
+          <div id="mobile-navigation" className="absolute inset-x-0 top-full z-40 border-t border-white/15 bg-brand shadow-lg xl:hidden">
+            <ul className="mx-auto grid w-full max-w-7xl gap-1 px-4 py-3 sm:grid-cols-2 sm:px-6">
+              <li><Link href="/cart" onClick={() => dispatch(menuClosed())} className={menuLinkClass}>Cart ({totalQuantity})</Link></li>
+              <li>
+                <button
+                  type="button"
+                  // The menu closes, so the drawer returns focus to the Menu button.
+                  onClick={() => { menuButton.current?.focus(); dispatch(menuClosed()); dispatch(cartDrawerOpened()); }}
+                  className={menuLinkClass}
+                >
+                  Cart preview
+                </button>
+              </li>
+              <li><Link href="/checkout" onClick={() => dispatch(menuClosed())} className={menuLinkClass}>Checkout</Link></li>
+              <li><Link href="/orders" onClick={() => dispatch(menuClosed())} className={menuLinkClass}>Orders</Link></li>
+              {session.data.user.isAdmin && <li><Link href="/admin" onClick={() => dispatch(menuClosed())} className={menuLinkClass}>Admin</Link></li>}
+              <li><Link href="/account" onClick={() => dispatch(menuClosed())} className={menuLinkClass}>Account</Link></li>
+              <li className="border-t border-white/15 pt-2 sm:col-span-2">
+                <button type="button" onClick={signOutAndRefresh} disabled={signOut.isPending} className={menuLinkClass}>Sign out</button>
+              </li>
+            </ul>
           </div>
         )}
       </nav>
