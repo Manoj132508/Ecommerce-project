@@ -23,6 +23,13 @@ const nextConfig: NextConfig = {
     return [
       { source: "/order-confirmation", destination: "/checkout", permanent: false },
       { source: "/product-unavailable", destination: "/orders", permanent: false },
+      // Until Phase 6B the home page was the listing; its ?q=, ?category= and
+      // ?sort= links now open /products (the query string is passed along).
+      // Here rather than in the page: the home route streams behind a loading
+      // skeleton, so a redirect from the page would arrive after a 200.
+      ...["q", "category", "sort"].map((key) => (
+        { source: "/", has: [{ type: "query" as const, key }], destination: "/products", permanent: false }
+      )),
     ];
   },
   async headers() {
