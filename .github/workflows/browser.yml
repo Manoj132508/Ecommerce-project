@@ -46,7 +46,7 @@ jobs:
       - run: npm ci && npm run build
         working-directory: apps/web
         env: { BACKEND_ORIGIN: "http://127.0.0.1:3000", NEXT_PUBLIC_APP_NAME: "Ecommerce" }
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: builds
           # .next is a hidden folder; its cache is not needed by `next start`.
@@ -85,7 +85,7 @@ jobs:
         working-directory: ecommerce-backend
       - run: npm ci
         working-directory: apps/web
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with: { name: builds }
       - name: Install ${{ matrix.engine }} (official Playwright procedure, with OS dependencies)
         working-directory: apps/web
@@ -109,7 +109,7 @@ jobs:
           exit "$status"
       # Small, always kept: counts, timings and load (no page content).
       - if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: metrics-${{ matrix.engine }}-${{ matrix.workers }}w
           retention-days: 14
@@ -120,7 +120,7 @@ jobs:
       # Traces, screenshots and the HTML report on failure. They contain only
       # throwaway accounts and data from this run's disposable database.
       - if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: failure-${{ matrix.engine }}-${{ matrix.workers }}w
           retention-days: 7

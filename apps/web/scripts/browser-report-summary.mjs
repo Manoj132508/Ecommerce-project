@@ -87,3 +87,25 @@ if (vmstatPath && existsSync(vmstatPath)) {
 const markdown = `${lines.join("\n")}\n`;
 console.log(markdown);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
+
+// GitHub annotations: readable on the run page and through the public
+// check-runs API, so failure locations are visible without downloading logs.
+// Only test titles, locations and the first error line are included.
+if (process.env.GITHUB_ACTIONS) {
+  const escape = (text) => String(text).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  for (const test of tests) {
+    for (const [attempt, result] of (test.results ?? []).entries()) {
+      if (result.status === "passed" || result.status === "skipped") continue;
+      const error = result.errors?.[0] ?? result.error ?? {};
+      const file = error.location?.file ? path.relative(path.resolve("..", ".."), error.location.file).replaceAll("\\", "/") : `apps/web/browser/${test.file}`;
+      const line = error.location?.line ?? test.line;
+      const level = test.status === "flaky" ? "warning" : "error";
+      const first = (error.message ?? "").split("\n").find((text) => text.trim()) ?? result.status;
+      console.log(`::${level} file=${file},line=${line},title=${escape(`[${test.projectName}] attempt ${attempt + 1} ${result.status} (${(result.duration / 1000).toFixed(1)} s)`)}::${escape(`${test.title}: ${first.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 300)}`)}`);
+    }
+  }
+  const counts = [...byProject].map(([project, c]) => `${project} ${c.passed ?? 0} passed, ${c.failed ?? 0} failed, ${c.flaky ?? 0} flaky, ${c.skipped ?? 0} skipped`).join("; ");
+  const load = lines.find((text) => text.includes("CPU busy mean")) ?? "no load sample";
+  const launches = lines.join("\n").split("\n").filter((text) => text.startsWith("- ") && text.includes(" worker ") && text.endsWith(" ms")).map((text) => text.slice(2)).join("; ");
+  console.log(`::notice title=Browser run summary::${escape(`${counts}. Wall ${((report.stats?.duration ?? 0) / 1000).toFixed(0)} s. ${load} Launch: ${launches || "n/a"}`)}`);
+}
