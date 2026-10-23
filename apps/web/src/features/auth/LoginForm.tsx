@@ -3,12 +3,18 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useReturnPath } from "@/hooks/useReturnPath";
 import { ApiError } from "@/lib/api/client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { noticeDismissed } from "@/store/uiSlice";
-import { fieldClass, FieldError, describedBy, looksLikeEmail } from "./fields";
+import { describedBy, FieldError, looksLikeEmail } from "./fields";
 import { useSignIn } from "./hooks";
+import { NOTICES } from "./notices";
+import { PasswordInput } from "./PasswordInput";
 
 interface LoginErrors {
   email?: string;
@@ -23,6 +29,7 @@ export function LoginForm() {
   const dispatch = useAppDispatch();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<LoginErrors>({});
   const emailInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
@@ -32,6 +39,7 @@ export function LoginForm() {
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setShowPassword(false);
     const found: LoginErrors = {
       email: !email.trim() ? "Enter your email address." : !looksLikeEmail(email) ? "Enter an email address such as name@example.com." : undefined,
       password: password ? undefined : "Enter your password.",
@@ -49,14 +57,14 @@ export function LoginForm() {
   };
 
   return (
-    <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-sm flex-col gap-4" noValidate>
-      {notice && <p role="status" className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">{notice}</p>}
-      {signIn.isError && (
-        <p id="login-error" role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{signIn.error.message}</p>
+    <form onSubmit={onSubmit} className="grid gap-5" noValidate>
+      {notice && (
+        <Alert role="status" variant={notice === NOTICES.accountCreated ? "success" : "warning"}>{notice}</Alert>
       )}
-      <div className="flex flex-col gap-1 text-sm font-medium">
-        <label htmlFor="login-email">Email</label>
-        <input
+      {signIn.isError && <Alert id="login-error" role="alert" variant="destructive">{signIn.error.message}</Alert>}
+      <div className="grid gap-1.5">
+        <Label htmlFor="login-email">Email</Label>
+        <Input
           ref={emailInput}
           id="login-email"
           type="email"
@@ -66,36 +74,31 @@ export function LoginForm() {
           onChange={(event) => { setEmail(event.target.value); setErrors((current) => ({ ...current, email: undefined })); }}
           aria-invalid={errors.email || credentialsRejected ? true : undefined}
           aria-describedby={describedBy(errors.email && "login-email-error", credentialsRejected && "login-error")}
-          className={fieldClass}
         />
         <FieldError id="login-email-error" message={errors.email} />
       </div>
-      <div className="flex flex-col gap-1 text-sm font-medium">
-        <label htmlFor="login-password">Password</label>
-        <input
+      <div className="grid gap-1.5">
+        <Label htmlFor="login-password">Password</Label>
+        <PasswordInput
           ref={passwordInput}
           id="login-password"
-          type="password"
           autoComplete="current-password"
           required
           value={password}
+          visible={showPassword}
+          onVisibleChange={setShowPassword}
           onChange={(event) => { setPassword(event.target.value); setErrors((current) => ({ ...current, password: undefined })); }}
           aria-invalid={errors.password || credentialsRejected ? true : undefined}
           aria-describedby={describedBy(errors.password && "login-password-error", credentialsRejected && "login-error")}
-          className={fieldClass}
         />
         <FieldError id="login-password-error" message={errors.password} />
       </div>
-      <button
-        type="submit"
-        disabled={signIn.isPending}
-        className="rounded-md bg-slate-900 px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#198754] disabled:opacity-60"
-      >
+      <Button type="submit" size="lg" disabled={signIn.isPending} aria-busy={signIn.isPending || undefined} className="w-full">
         {signIn.isPending ? "Signing in…" : "Sign in"}
-      </button>
-      <p className="text-center text-sm">
+      </Button>
+      <p className="text-center text-sm text-muted-foreground">
         New here?{" "}
-        <Link href={returnPath === "/" ? "/register" : `/register?from=${encodeURIComponent(returnPath)}`} className="font-medium text-[#198754] underline underline-offset-4">
+        <Link href={returnPath === "/" ? "/register" : `/register?from=${encodeURIComponent(returnPath)}`} className="focus-ring rounded-sm font-semibold text-primary underline underline-offset-4">
           Create an account
         </Link>
       </p>

@@ -16,17 +16,20 @@ export default async function AccountLayout({ children }: { children: ReactNode 
   if (!user) redirect("/login?from=%2Faccount");
 
   return (
-    <NarrowContent className="grid gap-6 md:grid-cols-[200px_1fr]">
-      <SectionNav
-        label="Account sections"
-        orientation="responsive"
-        items={[
-          { href: "/account", label: "Profile" },
-          { href: "/orders", label: "Orders" },
-          { href: "/cart", label: "Cart" },
-          { href: "/checkout", label: "Checkout" },
-        ]}
-      />
+    <NarrowContent className="grid items-start gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="md:sticky md:top-6 md:rounded-md md:border md:border-border md:bg-card md:p-2">
+        <SectionNav
+          label="Account sections"
+          orientation="responsive"
+          items={[
+            { href: "/account", label: "Profile" },
+            { href: "/orders", label: "Orders" },
+            { href: "/cart", label: "Cart" },
+            { href: "/checkout", label: "Checkout" },
+            ...(user.isAdmin ? [{ href: "/admin", label: "Admin" }] : []),
+          ]}
+        />
+      </div>
       <section className="min-w-0">{children}</section>
     </NarrowContent>
   );

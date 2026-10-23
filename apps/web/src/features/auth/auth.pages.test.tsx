@@ -326,6 +326,11 @@ describe("account", () => {
     const { requests } = fakeApi({ "DELETE /api/auth/sessions": { status: 204 } });
     const { user, queryClient } = renderWithProviders(<AccountActions />, { session: SESSION });
     await user.click(screen.getByRole("button", { name: "Sign out on all devices" }));
+    // A confirmation first: focus on "Stay signed in", nothing sent yet.
+    expect(screen.getByRole("alertdialog", { name: "Sign out on all devices?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stay signed in" })).toHaveFocus();
+    expect(requests).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Sign out everywhere" }));
     await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/"));
     expect(requests[0]).toMatchObject({ method: "DELETE", path: "/api/auth/sessions", headers: { "x-csrf-token": SESSION.csrfToken } });
     expect(queryClient.getQueryData(sessionQueryKey)).toBeNull();
