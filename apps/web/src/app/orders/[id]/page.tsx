@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { NarrowContent } from "@/components/layout/Container";
+import { CommerceContent } from "@/components/layout/Container";
 import { notFound, redirect } from "next/navigation";
 import { OrderDetailsClient } from "@/features/orders/OrderDetailsClient";
 import { PRODUCT_ID } from "@/features/catalog/product";
@@ -13,5 +13,5 @@ export default async function OrderDetailsPage({ params }: { params: Promise<{ i
   const result = await getServerOrder(id);
   if (result.kind === "signed-out") redirect(`/login?from=${encodeURIComponent(`/orders/${id}`)}`);
   if (result.kind === "not-found") notFound();
-  return <NarrowContent><OrderDetailsClient initialOrder={result.order} /></NarrowContent>;
+  return <CommerceContent><OrderDetailsClient initialOrder={result.order} /></CommerceContent>;
 }

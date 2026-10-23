@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { CartIcon } from "@/components/ui/icons";
 import { useAddCartItem } from "@/features/cart/hooks";
 import { ApiError } from "@/lib/api/client";
 
@@ -29,18 +31,13 @@ export function BuyAgainButton({ productId, productName }: { productId: string; 
 
   return (
     <div className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={buyAgain}
-        disabled={add.isPending}
-        aria-label={label}
-        className="rounded bg-[#198754] px-4 py-2 text-center font-semibold text-white hover:bg-[#126c45] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#198754] disabled:opacity-60"
-      >
+      <Button onClick={buyAgain} disabled={add.isPending} aria-busy={add.isPending || undefined} aria-label={label}>
+        <CartIcon className="size-4" />
         {add.isPending ? "Adding…" : "Buy again"}
-      </button>
-      <p aria-live="polite" className="min-h-5 text-sm text-[#08783e]">{added ? "Added to your cart" : ""}</p>
+      </Button>
+      <p aria-live="polite" className="min-h-5 text-sm font-medium text-primary">{added ? "Added to your cart" : ""}</p>
       {add.isError && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm font-medium text-destructive">
           {gone
             ? `${productName ?? "This product"} is no longer available and cannot be added to your cart.`
             : add.error.message}
