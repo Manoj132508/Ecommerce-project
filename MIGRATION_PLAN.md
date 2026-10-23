@@ -1117,7 +1117,7 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 
 - [x] Review and push the 5E commits (done in 5F, without force).
 - [x] Review and push the 5F commits (done in 5G, without force).
-- [ ] Review the local 5G commits; push only after approval.
+- [x] Review and push the 5G commits (pushed 2026-10-22 22:08, `11ba8ce..24e498e`, per the local reflog).
 - [ ] Manual pass: `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md` (screen readers, zoom, contrast themes).
 - [x] Admin migration (5G). Retire the Vite-only redirects when the Vite app is switched off (Phase 7).
 - [ ] Before any deployment: the Render settings `TRUST_PROXY_HOPS` and `PROXY_CLIENT_IP_SECRET`, and on Vercel `BACKEND_ORIGIN`, `TRUSTED_CLIENT_IP_HEADER`, `PROXY_CLIENT_IP_SECRET` and `NEXT_PUBLIC_SITE_URL` (documented, not applied); then a preview deployment as a **new** Vercel project.
@@ -1228,9 +1228,9 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/phase5/nextjs-foundation` is at `11ba8ce` (5F pushed without force). Phase 5G is **local only**. Nothing is merged or deployed.
+`origin/phase5/nextjs-foundation` is at `24e498e` (5G pushed 2026-10-22). Phase 6A (`b03b6e1` and the plan commits after it) is **local only**. Nothing is merged or deployed.
 
-1. Owner: review the local 5G commits; push only after explicit approval.
+1. Owner: review the local Phase 6A commits; push only after explicit approval.
 2. Manual pass (R41): `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`; automated browser, zoom and forced-colours checks pass (5G).
 3. Phase 6A (design system and shared UI) is committed locally, not pushed (spec §8). Next stage, with approval: Phase 6B, page by page per `docs/PHASE6_REDESIGN_SPEC.md`.
 4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
