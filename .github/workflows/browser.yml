@@ -1,0 +1,129 @@
+# Real-browser suite (Phase 7A), one engine per runner. The local investigation
+# (MIGRATION_PLAN.md 6B–6D) found stalls only with several engines and workers
+# on a 4-core machine at 80–91 % CPU; here every engine gets its own runner, and
+# each runs at 1 and at 2 workers so the two can be compared. Timeouts and the
+# retry policy are those of playwright.config.ts (one retry for Firefox only);
+# nothing here raises them. Throwaway stack only (browser/stack.mjs): its own
+# postgres:17-alpine container, compiled Express and `next start`.
+name: Browser
+
+on:
+  pull_request:
+  push:
+    branches: ["ci/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+  MONGODB_URI: ""
+  DATABASE_URL: ""
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build:
+    name: Build backend and Next.js once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: npm
+          cache-dependency-path: |
+            ecommerce-backend/package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: ecommerce-backend
+      - run: npm ci && npm run build
+        working-directory: apps/web
+        env: { BACKEND_ORIGIN: "http://127.0.0.1:3000", NEXT_PUBLIC_APP_NAME: "Ecommerce" }
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: builds
+          # .next is a hidden folder; its cache is not needed by `next start`.
+          include-hidden-files: true
+          retention-days: 1
+          path: |
+            ecommerce-backend/dist
+            apps/web/.next
+            !apps/web/.next/cache
+
+  browser:
+    name: ${{ matrix.engine }} (${{ matrix.workers }} worker${{ matrix.workers == 1 && '' || 's' }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit, firefox]
+        workers: [1, 2]
+        include:
+          - { engine: chromium, projects: "--project=chromium-desktop --project=chromium-tablet --project=chromium-mobile" }
+          - { engine: webkit, projects: "--project=webkit-desktop --project=webkit-mobile" }
+          - { engine: firefox, projects: "--project=firefox-desktop" }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: npm
+          cache-dependency-path: |
+            ecommerce-backend/package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci
+        working-directory: ecommerce-backend
+      - run: npm ci
+        working-directory: apps/web
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with: { name: builds }
+      - name: Install ${{ matrix.engine }} (official Playwright procedure, with OS dependencies)
+        working-directory: apps/web
+        run: npx playwright install --with-deps ${{ matrix.engine }}
+      - run: docker pull postgres:17-alpine
+      - name: Runner capacity
+        run: |
+          echo "CPUs: $(nproc)"; free -m; df -h . | tail -1
+      - name: Run the suite (${{ matrix.workers }} worker(s)) with load sampling
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/report.json
+        run: |
+          mkdir -p test-results
+          vmstat -n -t 5 > test-results/vmstat.log &
+          sampler=$!
+          status=0
+          npx playwright test ${{ matrix.projects }} --workers=${{ matrix.workers }} --reporter=list,json,html || status=$?
+          kill "$sampler" || true
+          node scripts/browser-report-summary.mjs test-results/report.json test-results/vmstat.log
+          exit "$status"
+      # Small, always kept: counts, timings and load (no page content).
+      - if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: metrics-${{ matrix.engine }}-${{ matrix.workers }}w
+          retention-days: 14
+          path: |
+            apps/web/test-results/report.json
+            apps/web/test-results/vmstat.log
+            apps/web/test-results/metrics
+      # Traces, screenshots and the HTML report on failure. They contain only
+      # throwaway accounts and data from this run's disposable database.
+      - if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: failure-${{ matrix.engine }}-${{ matrix.workers }}w
+          retention-days: 7
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results/browser

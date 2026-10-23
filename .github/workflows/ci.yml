@@ -1,0 +1,182 @@
+# Pull-request verification (Phase 7A). No deployment of any kind.
+#
+# Every database used here is throwaway: the MongoDB suite starts an in-memory
+# server (mongodb-memory-server), the PostgreSQL suite and the end-to-end
+# scripts start their own postgres:17-alpine container on the runner with a
+# random password, and both test setups clear MONGODB_URI/DATABASE_URL first.
+# No repository secret is read by any job.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["ci/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+  # Belt and braces: nothing here may reach a real database.
+  MONGODB_URI: ""
+  DATABASE_URL: ""
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  backend-mongodb:
+    name: Backend tests (MongoDB, in-memory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults: { run: { working-directory: ecommerce-backend } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: ecommerce-backend/package-lock.json }
+      - run: npm ci
+      - run: npm test
+
+  backend-postgres:
+    name: Backend tests (PostgreSQL migrations and API, throwaway container)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults: { run: { working-directory: ecommerce-backend } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: ecommerce-backend/package-lock.json }
+      - run: npm ci
+      - run: docker pull postgres:17-alpine
+      - run: npm run test:db
+
+  web-unit:
+    name: Next.js unit and component tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults: { run: { working-directory: apps/web } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: apps/web/package-lock.json }
+      - run: npm ci
+      - run: npm test
+
+  vite:
+    name: Legacy Vite app (tests, typecheck, lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults: { run: { working-directory: ecommerce-project } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: ecommerce-project/package-lock.json }
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  static:
+    name: Typecheck and lint (${{ matrix.package }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: ecommerce-backend, lint: false }
+          - { package: apps/web, lint: true }
+    defaults: { run: { working-directory: "${{ matrix.package }}" } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: "${{ matrix.package }}/package-lock.json" }
+      - run: npm ci
+      - run: npm run typecheck
+      - if: matrix.lint
+        run: npm run lint
+
+  build:
+    name: Production builds (backend and Next.js)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: npm
+          cache-dependency-path: |
+            ecommerce-backend/package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci
+        working-directory: ecommerce-backend
+      - run: npm run build
+        working-directory: ecommerce-backend
+      - run: npm ci
+        working-directory: apps/web
+      - name: next build
+        working-directory: apps/web
+        # Build-time values only: a loopback API origin (nothing is called at build time) and the store name.
+        env: { BACKEND_ORIGIN: "http://127.0.0.1:3000", NEXT_PUBLIC_APP_NAME: "Ecommerce" }
+        run: npm run build
+      - name: No server-only values in the client bundles
+        working-directory: apps/web
+        run: |
+          if grep -rlE "BACKEND_ORIGIN|PROXY_CLIENT_IP_SECRET|DATABASE_URL|MONGODB_URI|JWT_SECRET" .next/static; then
+            echo "::error::A server-only variable name appears in the client bundles"; exit 1
+          fi
+
+  audit:
+    name: Dependency audit (${{ matrix.package }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [ecommerce-backend, ecommerce-project, apps/web]
+    defaults: { run: { working-directory: "${{ matrix.package }}" } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "${{ env.NODE_VERSION }}" }
+      # Reads the lockfile only; fails on any advisory (all three packages were at 0 when this was added).
+      - run: npm audit --audit-level=low
+
+  e2e:
+    name: Proxy and page end-to-end (throwaway PostgreSQL, next start)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: npm
+          cache-dependency-path: |
+            ecommerce-backend/package-lock.json
+            apps/web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: ecommerce-backend
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
+        env: { BACKEND_ORIGIN: "http://127.0.0.1:3000", NEXT_PUBLIC_APP_NAME: "Ecommerce" }
+      - run: docker pull postgres:17-alpine
+      - run: npm run test:e2e
+        working-directory: apps/web
+      - run: npm run test:pages
+        working-directory: apps/web
