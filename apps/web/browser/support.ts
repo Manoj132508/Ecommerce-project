@@ -174,11 +174,19 @@ export async function openCartDrawer(page: Page) {
   return preview;
 }
 
-/** Signs out from the header at this viewport. */
+/**
+ * Signs out from the header at this viewport. The header shows "Sign in" as
+ * soon as the local session ends, but the app then refreshes the current page
+ * (router.refresh, to re-run the server guards); waiting for that refresh to
+ * answer keeps a following page.goto from racing it (seen in WebKit on CI).
+ */
 export async function signOutFromHeader(page: Page) {
+  const currentPath = new URL(page.url()).pathname;
+  const refreshed = page.waitForResponse((response) => response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === currentPath);
   if (isCompact(page)) await page.getByRole("button", { name: /^Menu/ }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await refreshed;
 }
 
 /** Runs SQL against the throwaway test database (never the development database). */

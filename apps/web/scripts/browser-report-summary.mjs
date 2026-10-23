@@ -100,8 +100,12 @@ if (process.env.GITHUB_ACTIONS) {
       const file = error.location?.file ? path.relative(path.resolve("..", ".."), error.location.file).replaceAll("\\", "/") : `apps/web/browser/${test.file}`;
       const line = error.location?.line ?? test.line;
       const level = test.status === "flaky" ? "warning" : "error";
-      const first = (error.message ?? "").split("\n").find((text) => text.trim()) ?? result.status;
-      console.log(`::${level} file=${file},line=${line},title=${escape(`[${test.projectName}] attempt ${attempt + 1} ${result.status} (${(result.duration / 1000).toFixed(1)} s)`)}::${escape(`${test.title}: ${first.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 300)}`)}`);
+      const plain = (error.message ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+      const first = plain.split("\n").find((text) => text.trim()) ?? result.status;
+      // For list comparisons (console errors, failed requests) the received entries are what matters.
+      const received = plain.split("\n").filter((text) => /^\s*\+\s+"/.test(text)).map((text) => text.trim().replace(/^\+\s+/, "")).slice(0, 4);
+      const detail = received.length ? `${first} — received: ${received.join(" | ")}` : first;
+      console.log(`::${level} file=${file},line=${line},title=${escape(`[${test.projectName}] attempt ${attempt + 1} ${result.status} (${(result.duration / 1000).toFixed(1)} s)`)}::${escape(`${test.title}: ${detail.slice(0, 600)}`)}`);
     }
   }
   const counts = [...byProject].map(([project, c]) => `${project} ${c.passed ?? 0} passed, ${c.failed ?? 0} failed, ${c.flaky ?? 0} flaky, ${c.skipped ?? 0} skipped`).join("; ");
