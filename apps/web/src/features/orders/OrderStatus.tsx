@@ -21,10 +21,15 @@ const TONES: Record<NonNullable<Order["status"]>, string> = {
 export const statusLabel = (status: Order["status"]) => (status ? LABELS[status] : "Not recorded (older order)");
 
 /** The order status as text in a coloured pill; the colour only repeats what the words say. */
-export function OrderStatusBadge({ status, className }: { status: Order["status"]; className?: string }) {
+export function OrderStatusBadge({ status, label = statusLabel(status), className }: {
+  status: Order["status"];
+  /** The admin area words a missing status differently ("Not recorded (legacy)"). */
+  label?: string;
+  className?: string;
+}) {
   return (
-    <span className={cn("inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-sm font-medium", status ? TONES[status] : "border-border bg-surface text-muted-foreground", className)}>
-      <span className="sr-only">Status: </span>{statusLabel(status)}
+    <span className={cn("inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-sm font-medium whitespace-nowrap", status ? TONES[status] : "border-border bg-surface text-muted-foreground", className)}>
+      <span className="sr-only">Status: </span>{label}
     </span>
   );
 }
