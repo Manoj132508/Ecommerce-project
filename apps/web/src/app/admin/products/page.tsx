@@ -18,7 +18,10 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-3xl font-bold">Products</h1>
+      <div className="grid gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Products</h1>
+        <p className="text-sm text-muted-foreground">The live catalogue. Changes appear in the store straight away.</p>
+      </div>
       <AdminProductsClient key={message ?? "list"} products={products} saved={message} />
     </div>
   );

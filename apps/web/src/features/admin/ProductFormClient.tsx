@@ -4,9 +4,17 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { Alert } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { describedBy, FieldError, FieldHint } from "@/features/auth/fields";
 import { requireCsrfToken } from "@/features/auth/hooks";
 import { ProductImage } from "@/features/catalog/ProductImage";
 import type { Product } from "@/features/catalog/product";
+import { cn } from "@/lib/utils";
 import {
   createProduct,
   EMPTY_PRODUCT_FORM,
@@ -24,22 +32,28 @@ interface FieldSpec {
   multiline?: boolean;
   inputMode?: "decimal" | "numeric";
   wide?: boolean;
+  section: "basics" | "media" | "details" | "search";
 }
 
 const FIELDS: FieldSpec[] = [
-  { name: "name", label: "Product name" },
-  { name: "category", label: "Category" },
-  { name: "price", label: "Price (USD)", hint: "For example 19.99.", inputMode: "decimal" },
-  { name: "stock", label: "Stock", hint: "Whole number. Only enforced for products with tracked inventory.", inputMode: "numeric" },
-  { name: "image", label: "Image path", hint: "images/products/file-name.jpg (an image in the store), or an https address.", wide: true },
-  { name: "description", label: "About this product", multiline: true, wide: true },
-  { name: "howItWorks", label: "How it works", multiline: true, wide: true },
-  { name: "careInstructions", label: "Care and guidance", multiline: true, wide: true },
-  { name: "highlights", label: "Highlights", hint: "Separate with commas.", wide: true },
-  { name: "keywords", label: "Search keywords (optional)", hint: "Separate with commas. Shoppers find the product by these words. Left empty on a new product, the category is used.", wide: true },
+  { name: "name", label: "Product name", section: "basics" },
+  { name: "category", label: "Category", section: "basics" },
+  { name: "price", label: "Price (USD)", hint: "For example 19.99.", inputMode: "decimal", section: "basics" },
+  { name: "stock", label: "Stock", hint: "Whole number. Only enforced for products with tracked inventory.", inputMode: "numeric", section: "basics" },
+  { name: "image", label: "Image path", hint: "images/products/file-name.jpg (an image in the store), or an https address.", wide: true, section: "media" },
+  { name: "description", label: "About this product", multiline: true, wide: true, section: "details" },
+  { name: "howItWorks", label: "How it works", multiline: true, wide: true, section: "details" },
+  { name: "careInstructions", label: "Care and guidance", multiline: true, wide: true, section: "details" },
+  { name: "highlights", label: "Highlights", hint: "Separate with commas.", wide: true, section: "details" },
+  { name: "keywords", label: "Search keywords (optional)", hint: "Separate with commas. Shoppers find the product by these words. Left empty on a new product, the category is used.", wide: true, section: "search" },
 ];
 
-const inputClass = "mt-1 w-full rounded-md border border-slate-400 px-3 py-2 font-normal aria-[invalid=true]:border-red-700 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#198754]";
+const SECTIONS: { id: FieldSpec["section"]; title: string; description: string }[] = [
+  { id: "basics", title: "Basics", description: "Name, category, price and stock." },
+  { id: "media", title: "Image", description: "The photo shown in the store." },
+  { id: "details", title: "Product information", description: "Shown on the product page." },
+  { id: "search", title: "Search", description: "How shoppers find the product." },
+];
 
 /** Create (no product) or edit a product. */
 export function ProductFormClient({ product }: { product?: Product }) {
@@ -84,56 +98,69 @@ export function ProductFormClient({ product }: { product?: Product }) {
   };
 
   const errorCount = Object.values(errors).filter(Boolean).length;
+  const fieldId = (name: keyof ProductForm) => `${formId}-${name}`;
+
+  const renderField = (field: FieldSpec) => {
+    const id = fieldId(field.name);
+    const common = {
+      id,
+      name: field.name,
+      value: form[field.name],
+      onChange: change,
+      "aria-invalid": errors[field.name] ? true : undefined,
+      "aria-describedby": describedBy(field.hint && `${id}-hint`, errors[field.name] && `${id}-error`),
+    };
+    return (
+      <div key={field.name} className={cn("grid content-start gap-1.5", field.wide && "md:col-span-2")}>
+        <Label htmlFor={id}>{field.label}</Label>
+        {field.hint && <FieldHint id={`${id}-hint`}>{field.hint}</FieldHint>}
+        {field.multiline
+          ? <Textarea {...common} rows={3} required />
+          : <Input {...common} type="text" inputMode={field.inputMode} required={field.name !== "keywords"} autoComplete="off" />}
+        <FieldError id={`${id}-error`} message={errors[field.name]} />
+      </div>
+    );
+  };
 
   return (
-    <form onSubmit={submit} noValidate className="grid gap-5 rounded-lg border bg-white p-4 shadow-sm sm:p-6" aria-describedby={errorCount ? `${formId}-summary` : undefined}>
-      <div ref={summary} tabIndex={-1} id={`${formId}-summary`} className="outline-none">
+    <form onSubmit={submit} noValidate className="grid gap-6" aria-describedby={errorCount ? `${formId}-summary` : undefined}>
+      <div ref={summary} tabIndex={-1} id={`${formId}-summary`} className="grid gap-3 outline-none">
         {errorCount > 0 && (
-          <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-red-800">
-            {errorCount === 1 ? "1 field needs attention." : `${errorCount} fields need attention.`} Each problem is described under its field.
-          </p>
+          <Alert role="alert" variant="destructive">
+            <p className="font-semibold">{errorCount === 1 ? "1 field needs attention." : `${errorCount} fields need attention.`} Each problem is described under its field.</p>
+            <ul className="mt-1 list-disc pl-5">
+              {FIELDS.filter((field) => errors[field.name]).map((field) => (
+                <li key={field.name}><a href={`#${fieldId(field.name)}`}>{field.label}: {errors[field.name]}</a></li>
+              ))}
+            </ul>
+          </Alert>
         )}
-        {save.isError && <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-red-800">{save.error.message}</p>}
+        {save.isError && <Alert role="alert" variant="destructive">{save.error.message}</Alert>}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {FIELDS.map((field) => {
-          const id = `${formId}-${field.name}`;
-          const describedBy = [field.hint ? `${id}-hint` : "", errors[field.name] ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined;
-          const common = {
-            id,
-            name: field.name,
-            value: form[field.name],
-            onChange: change,
-            "aria-invalid": errors[field.name] ? true : undefined,
-            "aria-describedby": describedBy,
-            className: inputClass,
-          };
-          return (
-            <div key={field.name} className={field.wide ? "md:col-span-2" : undefined}>
-              <label htmlFor={id} className="font-medium">{field.label}</label>
-              {field.hint && <p id={`${id}-hint`} className="text-sm text-slate-600">{field.hint}</p>}
-              {field.multiline
-                ? <textarea {...common} rows={3} required />
-                : <input {...common} type="text" inputMode={field.inputMode} required={field.name !== "keywords"} autoComplete="off" />}
-              {errors[field.name] && <p id={`${id}-error`} className="mt-1 text-sm font-medium text-red-700">{errors[field.name]}</p>}
+      {SECTIONS.map((section) => (
+        <Card key={section.id} className="grid gap-4 p-5 sm:p-6">
+          <div className="grid gap-0.5">
+            <h2 className="text-lg font-semibold">{section.title}</h2>
+            <p className="text-sm text-muted-foreground">{section.description}</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">{FIELDS.filter((field) => field.section === section.id).map(renderField)}</div>
+          {section.id === "media" && form.image.trim() && (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <div className="w-24 rounded-sm bg-surface p-1.5">
+                <ProductImage product={{ image: form.image, name: `Preview of ${form.name || "the product"}` }} sizes="96px" />
+              </div>
+              <span>Image preview as shoppers will see it.</span>
             </div>
-          );
-        })}
-      </div>
-
-      {form.image.trim() && (
-        <div className="flex items-center gap-3 text-sm text-slate-600">
-          <ProductImage product={{ image: form.image, name: `Preview of ${form.name || "the product"}` }} sizes="96px" className="w-24" />
-          <span>Image preview as shoppers will see it.</span>
-        </div>
-      )}
+          )}
+        </Card>
+      ))}
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-        <Link href="/admin/products" className="rounded border px-5 py-2 text-center font-semibold hover:bg-slate-50">Cancel</Link>
-        <button type="submit" disabled={save.isPending} className="rounded bg-[#198754] px-5 py-2 font-semibold text-white hover:bg-[#126c45] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#198754] disabled:opacity-60">
+        <Link href="/admin/products" className={buttonVariants({ variant: "outline" })}>Cancel</Link>
+        <Button type="submit" size="lg" disabled={save.isPending} aria-busy={save.isPending || undefined}>
           {save.isPending ? "Saving…" : editing ? "Save changes" : "Create product"}
-        </button>
+        </Button>
       </div>
     </form>
   );

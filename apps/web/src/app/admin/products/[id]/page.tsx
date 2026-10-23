@@ -17,9 +17,9 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
 
   return (
     <div className="grid gap-6">
-      <Link href="/admin/products" className="font-semibold text-[#08783e] underline">Back to products</Link>
-      <h1 className="text-3xl font-bold">Edit {product.name}</h1>
-      <p className="text-slate-600">Changes apply to the store immediately. Orders already placed keep the name and price they were sold with.</p>
+      <Link href="/admin/products" className="focus-ring w-fit rounded-sm text-sm font-semibold text-primary underline underline-offset-4">&larr; Back to products</Link>
+      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Edit {product.name}</h1>
+      <p className="-mt-3 text-sm text-muted-foreground">Changes apply to the store immediately. Orders already placed keep the name and price they were sold with.</p>
       <ProductFormClient product={product} />
     </div>
   );

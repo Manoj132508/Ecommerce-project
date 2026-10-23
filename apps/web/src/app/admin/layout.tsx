@@ -12,9 +12,13 @@ export const metadata: Metadata = { title: { default: "Admin", template: "%s · 
  * loading.tsx: redirects and 404s must be real status codes.
  */
 export default async function AdminLayout({ children }: { children: ReactNode }) {
-  await requireAdmin("/admin");
+  const admin = await requireAdmin("/admin");
   return (
     <div className="grid gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface px-4 py-3 text-sm">
+        <p><span className="font-semibold">Store administration</span><span className="text-muted-foreground"> · signed in as {admin.name}</span></p>
+        <p className="text-muted-foreground">Changes here apply to the live store.</p>
+      </div>
       <SectionNav
         label="Admin sections"
         items={[
