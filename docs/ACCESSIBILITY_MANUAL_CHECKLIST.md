@@ -38,6 +38,10 @@ date, tester, browser, assistive technology and version; do not mark an item as 
 | 2.9 | Review step and "Confirm and place order" | "Step 2 of 2" and the no-payment notice are read; the order confirmation heading is read after placing | ☐ | ☐ |
 | 2.10 | Orders: Buy again, Track package | "Added to your cart" announced; tracking progress bar read with its value text (Preparing/Shipped/Delivered) | ☐ | ☐ |
 | 2.11 | Let the session expire (or sign out in another tab) and act | Sign-in page with "Your session has expired" read | ☐ | ☐ |
+| 2.12 | Home (6B): headings list (NVDA H / VO rotor); open a "Shop by category" card | One h1 "Shop everyday essentials", then h2 sections (Shop by category, Top rated, Browse the full catalogue) with h3 product cards; each category card is read as one link ("Accessories, 2 products"), its photo is silent | ☐ | ☐ |
+| 2.13 | Listing (6B): change "Sort by" with the keyboard (NVDA: Alt+Down then arrows/Enter; VO: picker) | Combobox "Sort by" read with its value; focus stays on it after the list updates; the status "N products, sorted by …" is read (check whether NVDA announces it — if not, note it) | ☐ | ☐ |
+| 2.14 | Listing (6B): browser Back after two sort changes and a category chip | Each Back restores the previous order and category; the select reads the restored value | ☐ | ☐ |
+| 2.15 | Product details (6B): breadcrumb and "More in {category}" | Breadcrumb navigation read with the product as the current page; "Add to Cart" in the purchase card vs "Add {name} to cart" in related cards | ☐ | ☐ |
 
 ## 3. Admin journeys (admin account)
 

@@ -1,7 +1,8 @@
 # Phase 6 — Storefront redesign specification
 
-Status: **approved; Phase 6A (design system and shared UI) implemented 2026-10-22** — see §8. Pages are
-redesigned from 6B onwards. It applies to the
+Status: **approved; Phase 6A (design system and shared UI) implemented 2026-10-22** — see §8; **Phase 6B (home,
+catalogue with sorting, product details) implemented 2026-10-23** — see §9. Cart, checkout, orders, account,
+authentication and admin are redesigned from 6C onwards. It applies to the
 Next.js storefront in `apps/web` only; the legacy Vite app is not redesigned. Behaviour, URLs, API
 contracts, security properties and test coverage from Phases 5A–5F stay as they are: the redesign
 changes presentation and component structure, not business rules.
@@ -26,10 +27,10 @@ These come from the approved migration plan and are not open questions:
 | P1 | Primary colour **forest green `#16794a`** (5.43:1 with white); `#198754` is retired | 6A (tokens) |
 | P2 | **Yellow Add to Cart replaced by the green primary button** | 6A (`AddToCartControls`) |
 | P3 | **Inter** typography via `next/font/google` (self-hosted at build) | 6A |
-| P4 | **Product sorting** (`?sort=`, price and rating) | 6B (products page) |
+| P4 | **Product sorting** (`?sort=`) — built in 6B as name A–Z / Z–A and price low–high / high–low (the owner's 6B brief); rating sort not built | 6B (products page) — see §9 |
 | P5 | **Professional footer** — navigation and only true statements (no invented address, policies or reviews) | 6A |
 | P6 | **Dark mode deferred** — tokens are ready for a dark theme; none is defined or shipped | later |
-| P7 | **Show/hide password** toggle (`aria-pressed`) | 6B (authentication pages) |
+| P7 | **Show/hide password** toggle (`aria-pressed`) | authentication pages (not in 6B; planned for a later 6 task) |
 | P8 | **Maximum content width 1280 px** (`max-w-7xl`) shared by header, content and footer | 6A (`Container`) |
 
 Visual direction: polished, minimal, premium — neutral white/near-white surfaces, one green for actions,
@@ -250,3 +251,70 @@ admin pages reflow at 320, 375, 683 (200 % zoom) and 768 px (Chromium).
 - run 2: **121 passed, 0 failed, 0 flaky**, 23 skipped.
 - Screenshots reviewed: signed-in header and footer at 1366 px, open mobile menu at Pixel 7 width.
 - An earlier run started on 2026-10-23 01:36 was interrupted before finishing (no report); it is not counted.
+
+## 9. Phase 6B — home, catalogue, sorting and product details (2026-10-23)
+
+**Pages updated** (cart, checkout, orders, account, auth and admin untouched):
+- **Home (`/`)** — no longer the full listing. A brand-green hero with counts from the catalogue ("6 products · 4
+  categories"), the category names and the **highest-rated product** as a spotlight (its photo is the only preloaded
+  image); "Shop by category" cards (one per category, product count, the category's top-rated photo as a decorative
+  image, link to `/products?category=`); a "Top rated" row of four cards; an entry point to the full catalogue. Copy
+  is limited to what the data says: no discounts, testimonials, statistics or product claims. The meta description is
+  built from the real category names. Old listing links (`/?q=`, `?category=`, `?sort=`) are **307 redirects** to
+  `/products` with the query passed along (`next.config.ts`: a redirect from the page would arrive after the 200
+  streamed by its loading skeleton).
+- **Listing (`/products`)** — heading and live result count, category chips and the sort control in one toolbar,
+  category on each card, empty states for "no match" (with "Search all categories" when a category is also set), an
+  empty category and an empty catalogue; skeletons match the toolbar and cards. Canonical stays `/products`.
+- **Product details (`/products/[id]`)** — breadcrumb (Home / Products / category / product, `aria-current="page"`),
+  two columns from `md` with a fixed square image tile (sticky on wide screens), category link, rating, a purchase
+  card (price, quantity, green Add to Cart — the existing `AddToCartControls`, unchanged), highlights with check
+  icons, information cards and "More in {category}" (up to four others, top rated first). Metadata, canonical URL,
+  JSON-LD and the genuine 404 (also for deleted products) are unchanged; the 404 page uses `EmptyState`.
+
+**Sorting rules** (`sortProducts`, `src/features/catalog/product.ts`):
+- `?sort=` accepts exactly `name-asc`, `name-desc`, `price-asc`, `price-desc`; anything else (or none) keeps the
+  catalogue's own order — never an error.
+- Names compare with `Intl.Collator("en", { sensitivity: "base", numeric: true })` (case-insensitive, "Item 2" before
+  "Item 10", same result on server and client). Prices compare in whole cents.
+- Ties are total and deterministic: equal names → cheaper first → id; equal prices → name A–Z → id. Name Z–A reverses
+  only the name comparison. The result never depends on the API's row order (unit-tested with reversed input).
+- "Top rated" (home, related products): highest average, then most ratings, then name, then id; unrated products are
+  left out.
+- Sorting happens on the server, in the page, from the cached catalogue (`getCatalog`, 60 s, tag `catalog`); there is
+  no product state in Redux or TanStack Query, so admin create/edit/delete invalidation (`revalidateTag("catalog")`)
+  covers every new page.
+
+**Sort control** (`SortControl`, the only new client component): a native `<select>` labelled "Sort by" in a GET form
+with the search and category as hidden fields. Without JavaScript a `<noscript>` Apply button submits it (no layout
+shift on hydration). With JavaScript a choice navigates at once with `router.push` (a history entry: Back/Forward
+restore each order; scroll kept); `useOptimistic` shows the choice immediately and the form is `aria-busy` while
+loading. The listing updates in place, so focus stays on the select (verified in all engines). The result-count
+status adds ", sorted by …" for screen readers. A native select was chosen over a Radix/shadcn `Select` for the
+platform picker on phones and full keyboard/AT support with no new dependency (spec §2.4 already specifies a styled
+native select).
+
+**Components reused:** `Container`, `Card`, `Badge`, `buttonVariants`, `EmptyState`, `Skeleton`, `Price`,
+`RatingStars`, `ProductImage` (new `decorative` option), `ProductCard`/`ProductGrid` (new `headingLevel`,
+`preloadCount`, `className`; category line), `AddToCartControls`/`QuantitySelector` (unchanged: quantity 1–10,
+sign-in redirect with return path, cart mutation and its query invalidation). New: `HomeSections`
+(`HomeHero`, `CategoryGrid`, `SectionHeader`), `SortControl`, `CheckIcon`, helpers `parseSort`, `sortLabel`,
+`sortProducts`, `topRated`, `categorySummaries`, `catalogHref`. No new dependencies.
+
+**Verification (final, 2026-10-23, on the final build):** typecheck, lint, `npm audit` 0; unit/component **205/205**
+(+19); proxy e2e **52/52**; pages e2e **92/92** (+11: home sections, top-rated tie order, single hero preload,
+legacy 307s, listing with every product, sort order in server HTML, sort + category, no-JS form, canonical, unknown
+sort ignored). Mutation checks: removing the name tie-break, `push` → `replace`, chips dropping `sort` and letting
+unrated products into "Top rated" each fail the new tests. Browser suite — see MIGRATION_PLAN.md 6B for every run;
+final full run 132 passed, 1 failed, 1 flaky, 28 skipped, both Firefox navigation stalls; Firefox alone 22/22 twice
+with retries off. Measured CLS (local `next start`, Chromium, not field data): desktop 0.0005 on home, listing and
+product; mobile 0.0000–0.0034. Encoded script transfer on the home page 183.9 KiB (5F: 172.7 KiB).
+
+**Screenshots reviewed** (Chromium 1366 px, 820 px tablet, Pixel 7): home, sorted listing, product details — no
+overlap, clipping or sideways scrolling; the purchase card keeps a reserved line under the button for the "Added N
+to your cart" message (deliberate, no layout shift).
+
+**Not done / deviations:** rating sort (P4 mentioned it; the 6B brief listed name and price only); category chips
+wrap rather than scroll horizontally on phones; no toast (`Sonner`) for add to cart — the existing inline live
+message stays; no accordion for product information on mobile (cards instead, so headings stay plain `h2`s).
+Screen-reader testing of search, filters and sorting is still manual (`docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`).
