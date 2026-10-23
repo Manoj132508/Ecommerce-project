@@ -10,5 +10,8 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test/setup.tsx"],
+    // Interaction-heavy accessibility tests can exceed Vitest's five-second
+    // default on shared CI runners while remaining deterministic.
+    testTimeout: 10_000,
   },
 });
