@@ -1,6 +1,7 @@
-# Phase 6 — Storefront redesign specification (proposal, not implemented)
+# Phase 6 — Storefront redesign specification
 
-Status: **proposal for review** (updated 2026-10-22, Phase 5G). Nothing in this document is built yet. It applies to the
+Status: **approved; Phase 6A (design system and shared UI) implemented 2026-10-22** — see §8. Pages are
+redesigned from 6B onwards. It applies to the
 Next.js storefront in `apps/web` only; the legacy Vite app is not redesigned. Behaviour, URLs, API
 contracts, security properties and test coverage from Phases 5A–5F stay as they are: the redesign
 changes presentation and component structure, not business rules.
@@ -12,15 +13,28 @@ These come from the approved migration plan and are not open questions:
 | # | Approved decision | Notes for implementation |
 | --- | --- | --- |
 | A1 | **shadcn/ui on Tailwind CSS**, initialised in `apps/web` (`npx shadcn init`) | Components are copied into the repo (no runtime UI library dependency) |
-| A2 | **Map the current brand colours (`#198754` etc.) to CSS variables** | §2.1 lists the tokens; whether `--primary` keeps `#198754` or moves to `#16794a` is still open (P1) |
+| A2 | **Map the current brand colours (`#198754` etc.) to CSS variables** | §2.1 lists the tokens; `--primary` is `#16794a` (P1 approved) |
 | A3 | **Replace ad hoc classes with `Button`, `Select`, `Input`, `Label`, `Card`, `Dialog`, `Tabs`, `Sheet`, `Sonner`** | `Dialog` replaces the admin delete confirmation (Phase 5G uses an inline `alertdialog` without new dependencies); `Tabs` for admin; `Sheet` for the mobile menu (and cart drawer); `Sonner` for "added to cart" |
 | A4 | **One page per commit, visual check at 375 px and 1280 px after each** | The Playwright projects and screenshots (MIGRATION_PLAN.md 5F/5G) are the evidence; add a 375 px project |
 | A5 | **Acceptance: no visual regressions; form accessibility equal or better** | Today's baseline: axe 0 serious/critical, field errors linked (5G), keyboard and forced-colours tests passing |
 | A6 | Phase 6 starts only **after functional parity** | Parity reached in 5G except the items listed in MIGRATION_PLAN.md 5G "Remaining gaps" |
 
-Pending owner decisions (proposals in this document, **not approved**): P1 primary colour `#16794a` vs keeping
-`#198754`; P2 retire the yellow Add to Cart button; P3 Inter font; P4 sort control; P5 footer; P6 dark mode;
-P7 show/hide password; P8 content width `max-w-7xl`.
+### Owner decisions P1–P8 — **approved 2026-10-22**
+
+| # | Decision | Implemented in |
+| --- | --- | --- |
+| P1 | Primary colour **forest green `#16794a`** (5.43:1 with white); `#198754` is retired | 6A (tokens) |
+| P2 | **Yellow Add to Cart replaced by the green primary button** | 6A (`AddToCartControls`) |
+| P3 | **Inter** typography via `next/font/google` (self-hosted at build) | 6A |
+| P4 | **Product sorting** (`?sort=`, price and rating) | 6B (products page) |
+| P5 | **Professional footer** — navigation and only true statements (no invented address, policies or reviews) | 6A |
+| P6 | **Dark mode deferred** — tokens are ready for a dark theme; none is defined or shipped | later |
+| P7 | **Show/hide password** toggle (`aria-pressed`) | 6B (authentication pages) |
+| P8 | **Maximum content width 1280 px** (`max-w-7xl`) shared by header, content and footer | 6A (`Container`) |
+
+Visual direction: polished, minimal, premium — neutral white/near-white surfaces, one green for actions,
+the deep brand green for header and footer, consistent spacing and radii, accessible contrast and product
+photography on quiet tiles.
 
 ## 1. Where the UI is today (inspected, Phase 5F; updated 5G)
 
@@ -187,6 +201,52 @@ Contrast values are WCAG ratios computed from these hex values (2026-10-22) and 
 
 ## 7. Out of scope / decisions needed before Phase 6 starts
 
-- Decide the pending items P1–P8 (section 0).
+- ~~Decide the pending items P1–P8~~ — approved (section 0).
 - Admin redesign is task 12 (the admin area was migrated in Phase 5G).
 - Images to object storage/CDN (see MIGRATION_PLAN.md 5D) — independent of the redesign.
+
+## 8. Phase 6A — what was built (2026-10-22)
+
+**Dependencies** (exact versions, `npm audit` 0): `class-variance-authority@0.7.1`, `clsx@2.1.1`, `tailwind-merge@3.7.0`.
+shadcn/ui is set up by hand — `components.json`, `cn()` in `src/lib/utils.ts`, components in `src/components/ui`
+written in the shadcn source style — instead of `npx shadcn init`, which rewrites `globals.css` and adds
+`lucide-react` and `tw-animate-css`. No Radix package yet: links styled as buttons use `buttonVariants()` (no
+`asChild`/Slot), and the five icons are inline SVGs.
+
+**Tokens** (`src/app/globals.css`, `:root` + `@theme inline`): `background`, `foreground`, `surface`, `card`, `muted`,
+`muted-foreground`, `border`, `input` (`#7b8780`, 3.74:1, so field borders meet WCAG 1.4.11), `brand`, `primary`
+(+ `hover`, `foreground`), `secondary`, `accent`, `destructive` (+ `hover`), `success`, `warning`, `ring`; radii
+`sm` 6 px, `md` 10 px, `lg` 16 px; `--font-sans` is Inter. Focus: a `focus-ring` utility and a base `:focus-visible`
+rule, both a 2 px **outline** (kept in forced-colours mode, unlike a box-shadow ring); header and footer set `--ring`
+to white. `prefers-reduced-motion` shortens every transition and animation.
+
+**Components:** `ui/button` (variants default, secondary, outline, ghost, destructive, link, inverse; sizes default,
+sm, lg, icon; 44 px targets below `lg`), `ui/input`, `ui/label`, `ui/card` (header, title, description, content,
+footer), `ui/badge`, `ui/skeleton`, `ui/icons`; `layout/Container` (1280 px) and `NarrowContent` (1024 px for pages
+not yet redesigned), `layout/SiteFooter`, `layout/SectionNav` (account and admin sub-navigation with
+`aria-current`), `layout/EmptyState`; catalogue `Price`, `cart/QuantitySelector`, restyled `ProductCard`,
+`ProductGrid` and `RatingStars`; skip link in the root layout.
+
+**Deliberate deviations from this spec:**
+- The header switches to its full navigation at `xl` (1280 px), not `lg`: signed in it has seven items (Orders,
+  Admin, account name, Checkout, cart preview, Cart, Sign out), which squeeze the search box at 1024 px. Revisit
+  if 6B moves Checkout and Sign out into an account menu.
+- `Sheet`, `Dialog`, `DropdownMenu` and `Sonner` (Radix) are not added in 6A. The hand-written cart drawer and
+  mobile menu keep their tested focus handling (5F) and are restyled only; adopting Radix is a 6B decision.
+- Page internals (cart quantity select, checkout fields, order cards, admin tables) keep their markup until their
+  6B task.
+
+**New browser checks:** signed-in header (desktop: cart link with count; compact: Menu opens a panel, Escape closes it
+and returns focus to the button) and footer navigation on every project; customer reflow also at 375 and 768 px;
+admin pages reflow at 320, 375, 683 (200 % zoom) and 768 px (Chromium).
+
+**Verification (final run, 2026-10-23, on the final build):** typecheck, lint, `npm audit` 0; unit/component
+**186/186**; proxy e2e **52/52**; pages e2e **81/81**. Browser suite (6 projects):
+- run 1: 117 passed, **2 failed**, 2 flaky, 23 skipped — Firefox account flow and WebKit-mobile admin order status.
+  Both are the known stalls (MIGRATION_PLAN.md 5G): in WebKit the link was rendered and visible but never became
+  "stable" (no animation frames); in Firefox the page stopped after a request (no navigation after sign-in, header
+  not updated after sign-out). Re-run in isolation (`--repeat-each=3`, Firefox + WebKit mobile): 22 passed, 0 failed,
+  2 flaky (Firefox account flow, passed on retry);
+- run 2: **121 passed, 0 failed, 0 flaky**, 23 skipped.
+- Screenshots reviewed: signed-in header and footer at 1366 px, open mobile menu at Pixel 7 width.
+- An earlier run started on 2026-10-23 01:36 was interrupted before finishing (no report); it is not counted.

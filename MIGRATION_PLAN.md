@@ -1135,7 +1135,10 @@ Then use a bucket such as S3 or R2 behind a CDN, store absolute URLs, and allow 
 
 ### Phase 6 — shadcn/ui (after parity, component by component)
 
-- [ ] 6.1 `npx shadcn init` in `apps/web`; map current brand colours (`#198754` etc.) to CSS variables
+Owner decisions P1–P8 approved 2026-10-22 (spec §0).
+
+- [x] **6A — design system and shared UI (2026-10-23, local, not pushed):** tokens (`--primary` `#16794a`), Inter, `cn()`, shadcn-style `ui/` components, 1280 px `Container`, restyled header and mobile menu, new footer, product card/grid, `Price`, `QuantitySelector`, skip link. What was built, deviations and results: spec §8. Final checks: unit 186/186, proxy e2e 52/52, pages e2e 81/81, browser run 2 121 passed / 0 failed / 0 flaky / 23 skipped (run 1 had 2 failures from the known Firefox/WebKit stalls; re-run in isolation passed).
+- [x] 6.1 shadcn/ui set up by hand in `apps/web` (not `npx shadcn init`; reason in spec §8); brand colours mapped to CSS variables
 - [ ] 6.2 Replace `utils/tailwindClasses.ts` usages with `Button`, `Select`, `Input`, `Label`, `Card`, `Dialog` (admin delete confirm replaces `window.confirm`), `Tabs` (admin), `Sheet` (mobile menu), `Sonner` toasts (added-to-cart)
 - [ ] 6.3 One page per commit; visual check at 375 px and 1280 px after each
 
@@ -1229,6 +1232,6 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 1. Owner: review the local 5G commits; push only after explicit approval.
 2. Manual pass (R41): `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md`; automated browser, zoom and forced-colours checks pass (5G).
-3. Next stage, with approval: decide the pending Phase 6 items (P1–P8) and start Phase 6 per `docs/PHASE6_REDESIGN_SPEC.md`.
+3. Phase 6A (design system and shared UI) is committed locally, not pushed (spec §8). Next stage, with approval: Phase 6B, page by page per `docs/PHASE6_REDESIGN_SPEC.md`.
 4. Before any preview deployment: apply the documented proxy and rate-limit settings (5C) in a new Vercel project and the Render service; cookie sessions stay off in production until the conditions in "Conditions before the legacy bearer tokens can be removed" are met.
 5. Still open: the R31 production-readiness items and the production prerequisites in §6 Phase 4.
