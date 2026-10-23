@@ -51,6 +51,16 @@ vi.mock("next/form", () => ({
   ),
 }));
 
+// jsdom has no showModal()/close(): open and close the element only. Modality
+// (inert page, focus trap, Escape) is the browser's and is covered by Playwright.
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+    this.removeAttribute("open");
+    this.dispatchEvent(new Event("close"));
+  };
+}
+
 afterEach(async () => {
   navigation.reset();
   vi.unstubAllGlobals();

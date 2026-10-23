@@ -85,4 +85,40 @@ test.describe("accounts", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator("#main-content")).toBeFocused();
   });
+
+  test("password toggle: pressed state, the value is shown only while pressed, and hidden again on submit", async ({ page, problems }) => {
+    await page.goto("/login");
+    const password = page.getByLabel("Password", { exact: true });
+    const toggle = page.getByRole("button", { name: "Show password" });
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await page.getByLabel("Email").fill("nobody@example.com");
+    await password.fill("not-the-password-1");
+    await toggle.click();
+    await expect(password).toHaveAttribute("type", "text");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(password).toHaveAttribute("type", "password");
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("Invalid email or password");
+    expectCleanPage(problems, { allow: [/401 \(Unauthorized\)/] });
+  });
+
+  test("sign out on all devices: a modal confirmation, Escape keeps the session, confirming ends it", async ({ page, problems }) => {
+    await signInThroughApi(page.request, newCustomer("Everywhere"));
+    await page.goto("/account");
+    const opener = page.getByRole("button", { name: "Sign out on all devices" });
+    await opener.click();
+    const dialog = page.getByRole("alertdialog", { name: "Sign out on all devices?" });
+    expect(await dialog.evaluate((element) => element.matches(":modal"))).toBe(true);
+    await expect(page.getByRole("button", { name: "Stay signed in" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    expect((await page.request.get("/api/auth/session")).status()).toBe(200);
+
+    await opener.click();
+    await page.getByRole("button", { name: "Sign out everywhere" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    expect((await page.request.get("/api/auth/session")).status()).toBe(401);
+    expectCleanPage(problems, { allow: [/401 \(Unauthorized\)/] });
+  });
 });

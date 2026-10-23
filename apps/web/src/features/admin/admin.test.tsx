@@ -2,7 +2,7 @@
 // Admin rules, screens and server guard. Express enforces the same rules again
 // (ecommerce-backend/test/db/api.postgres.test.ts); these tests cover what the
 // screens offer, send and show.
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { Order } from "@/features/orders/api";
 import { changesCatalog } from "@/lib/proxy/catalogWrites";
@@ -165,7 +165,8 @@ describe("product list", () => {
     const deleteButton = screen.getByRole("button", { name: `Delete ${product.name}` });
     await user.click(deleteButton);
     expect(screen.getByRole("alertdialog", { name: `Delete ${product.name}?` })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete permanently" })).toHaveFocus();
+    // Focus starts on the least destructive choice: a stray Enter keeps the product.
+    expect(screen.getByRole("button", { name: "Keep product" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Keep product" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(deleteButton).toHaveFocus();
@@ -182,7 +183,8 @@ describe("product list", () => {
     fakeApi({});
     const { user } = renderWithProviders(<AdminProductsClient products={PRODUCTS} />, { session: ADMIN_SESSION });
     await user.type(screen.getByRole("searchbox", { name: "Filter the product list" }), product.keywords[0]!);
-    expect(screen.getByRole("heading", { name: product.name })).toBeInTheDocument();
+    const rows = within(screen.getByRole("table", { name: "Products in the store" })).getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("cell")[0]?.textContent)).toEqual([product.name]);
     expect(screen.getByText(new RegExp(`of ${PRODUCTS.length} products`))).toBeInTheDocument();
   });
 });

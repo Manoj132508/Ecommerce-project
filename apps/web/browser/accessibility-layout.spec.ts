@@ -128,6 +128,27 @@ test.describe("accessibility and layout", () => {
     }
   });
 
+  test("admin lists and details: axe and forced colours (Chromium)", async ({ page, browserName }, testInfo) => {
+    test.skip(browserName !== "chromium", "forced-colours emulation is Chromium-only");
+    const shopper = newCustomer("Contrast");
+    const csrf = await signInThroughApi(page.request, shopper);
+    const orderId = await placeOrderThroughApi(page.request, csrf, PRODUCTS.sunhat.id, shopper);
+    await page.context().clearCookies();
+    await signInAsAdmin(page.request);
+    const pages = [["admin-products", "/admin/products"], ["admin-orders", "/admin/orders"], ["admin-order", `/admin/orders/${orderId}`], ["account", "/account"]] as const;
+    await scanPages(page, testInfo, pages);
+    await page.emulateMedia({ forcedColors: "active" });
+    for (const [name, path] of pages) {
+      await page.goto(path);
+      await settle(page);
+      const borderless = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("button, input:not([type=radio]):not([type=checkbox]), select, textarea")]
+        .filter((element) => element.offsetParent !== null && getComputedStyle(element).borderTopWidth === "0px")
+        .map((element) => element.getAttribute("aria-label") || element.textContent?.trim() || element.outerHTML.slice(0, 160)));
+      expect(borderless, `${name}: controls without a border in forced colours`).toEqual([]);
+      await snapshot(page, testInfo.project.name, `31-forced-colors-${name}`);
+    }
+  });
+
   test("admin pages reflow at 320, 375 and 768 px and at 200 % zoom (Chromium)", async ({ page, browserName }, testInfo) => {
     test.skip(browserName !== "chromium" || testInfo.project.name !== "chromium-desktop", "one desktop engine is enough: zoom is emulated by the CSS viewport");
     const shopper = newCustomer("Reflow");

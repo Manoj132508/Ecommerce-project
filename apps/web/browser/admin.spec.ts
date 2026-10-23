@@ -21,7 +21,7 @@ test.describe("admin", () => {
     await expect(page.getByRole("link", { name: "Admin", exact: true })).toHaveCount(0);
   });
 
-  test("product lifecycle: validated form, create with keywords, edit keeps them, confirmed delete", async ({ page, problems }, testInfo) => {
+  test("product lifecycle: validated form, create with keywords, edit keeps them, confirmed delete", async ({ page, problems, browserName }, testInfo) => {
     const name = `Desk Lamp ${randomUUID().slice(0, 6)}`;
     await signInAsAdmin(page.request);
     await page.goto("/");
@@ -65,11 +65,30 @@ test.describe("admin", () => {
     expect(stored.rows).toEqual([{ price_cents: 2600, keywords: ["lamp", "reading"] }]);
 
     await page.getByRole("searchbox", { name: "Filter the product list" }).fill(name);
-    await page.getByRole("button", { name: `Delete ${name}` }).click();
-    await expect(page.getByRole("button", { name: "Delete permanently" })).toBeFocused();
-    await page.keyboard.press("Enter");
+    const deleteButton = page.getByRole("button", { name: `Delete ${name}` });
+    await deleteButton.click();
+    const dialog = page.getByRole("alertdialog", { name: `Delete ${name}?` });
+    // A real modal (native <dialog>, showModal): the rest of the page is inert.
+    expect(await dialog.evaluate((element) => element.matches(":modal"))).toBe(true);
+    await expect(page.getByRole("button", { name: "Keep product" })).toBeFocused();
+    await expectNoSeriousAxeViolations(page);
+    // Escape keeps the product and returns focus to the button that opened the dialog.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(deleteButton).toBeFocused();
+    await deleteButton.click();
+    if (browserName === "webkit") {
+      // WebKit does not Tab to buttons by default (Safari preference): confirm with a click.
+      await page.getByRole("button", { name: "Delete permanently" }).click();
+    } else {
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("button", { name: "Delete permanently" })).toBeFocused();
+      await page.keyboard.press("Enter");
+    }
     await expect(page.getByRole("status").filter({ hasText: `${name} was deleted.` })).toBeVisible();
-    await expect(page.getByRole("heading", { name })).toHaveCount(0);
+    await expect(page.getByRole("table", { name: "Products in the store" }).getByRole("row").filter({ hasText: name })).toHaveCount(0);
+    // The row is gone, so focus moves to the filter field.
+    await expect(page.getByRole("searchbox", { name: "Filter the product list" })).toBeFocused();
     await page.goto("/products?q=reading");
     await expect(page.getByRole("link", { name })).toHaveCount(0);
     expectCleanPage(problems, { allow: [/404 \(Not Found\)/] });
