@@ -10,6 +10,8 @@ export const MIGRATIONS_DIRECTORY = fileURLToPath(new URL("../../db/migrations",
 
 export interface TestDatabase {
   name: string;
+  /** Connection string of this throwaway database (for pools with other options). */
+  url: string;
   pool: pg.Pool;
   drop: () => Promise<void>;
 }
@@ -34,6 +36,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
   return {
     name,
+    url: url.toString(),
     pool,
     drop: async () => {
       await pool.end();

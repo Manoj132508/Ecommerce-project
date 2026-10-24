@@ -12,6 +12,7 @@ import authRoutes from "./routes/authRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
 import type { SessionAuth } from "./auth/sessionAuth.js";
 import type { AuthRateLimiter } from "./auth/rateLimit.js";
+import { isReady, type Readiness } from "./health.js";
 
 export interface AppOptions {
   /** Data access per domain. Defaults to MongoDB for every domain. */
@@ -24,13 +25,18 @@ export interface AppOptions {
    * that do not pass one run without limits, as before.
    */
   rateLimiter?: AuthRateLimiter;
+  /** GET /readyz: the data stores to check and the shutdown state (server.ts). Absent: ready, nothing to check. */
+  readiness?: Readiness;
   /** Reverse proxies in front of Express (TRUST_PROXY_HOPS). 0: X-Forwarded-For is ignored. */
   trustProxyHops?: number;
 }
 
 // Builds the Express app without connecting to a database or opening a port,
 // so tests can exercise it in-process. Call after environment variables load.
-export function createApp({ repositories = createRepositories(), sessionAuth, rateLimiter, trustProxyHops = 0 }: AppOptions = {}): Express {
+export function createApp({
+  repositories = createRepositories(), sessionAuth, rateLimiter, trustProxyHops = 0,
+  readiness = { shuttingDown: () => false, checks: [] },
+}: AppOptions = {}): Express {
   const app = express();
   // No framework fingerprint in responses.
   app.disable("x-powered-by");
@@ -71,6 +77,15 @@ export function createApp({ repositories = createRepositories(), sessionAuth, ra
 
   app.get("/", (req, res) => {
     res.send("Ecommerce API is running");
+  });
+
+  // Liveness and readiness (health.ts). No caching, no details in the body.
+  app.get("/healthz", (req, res) => {
+    res.set("Cache-Control", "no-store").json({ status: "ok" });
+  });
+  app.get("/readyz", async (req, res) => {
+    const ready = await isReady(readiness);
+    res.set("Cache-Control", "no-store").status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable" });
   });
 
   app.get("/getjson", (req, res) => {

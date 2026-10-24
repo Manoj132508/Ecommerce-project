@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import pg from "pg";
 import { fileURLToPath } from "node:url";
+import { createApiPoolFor, loadPostgresTimeouts, logIdleClientErrors } from "./postgresOptions.js";
 
 // Keep PostgreSQL credentials separate while MongoDB remains the live database.
 // Existing process environment variables still take precedence in deployment.
@@ -23,9 +24,13 @@ if (!process.env.DATABASE_URL?.trim()) {
   );
 }
 
-const pool = new Pool({
+// Scripts (migrations, data import, cleanup): no statement limit.
+const pool = logIdleClientErrors(new Pool({
   connectionString: process.env.DATABASE_URL,
-});
+}), "scripts");
+
+/** The API's pool: connection, statement and idle-in-transaction timeouts (config/postgresOptions.ts). */
+export const createApiPool = (): pg.Pool => createApiPoolFor(process.env.DATABASE_URL ?? "", loadPostgresTimeouts(process.env));
 
 export interface PostgresConnectionInfo {
   database_name: string;

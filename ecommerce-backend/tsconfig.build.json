@@ -13,6 +13,8 @@
   },
   "include": [
     "app.ts",
+    "health.ts",
+    "lifecycle.ts",
     "auth/**/*.ts",
     "server.ts",
     "config/**/*.ts",

@@ -20,6 +20,8 @@ import { MongoRateLimitStore, PostgresRateLimitStore } from "./auth/rateLimitSto
 import mongoose from "mongoose";
 import { createRepositories } from "./repositories/index.js";
 import { errorMessage } from "./utils/errors.js";
+import { mongoReadiness, postgresReadiness, type ReadinessCheck } from "./health.js";
+import { createShutdown, loadShutdownTimeout, type Closer } from "./lifecycle.js";
 
 dotenv.config();
 
@@ -38,10 +40,12 @@ async function startServer() {
     // (.env.postgres) are only loaded when a domain explicitly selects it.
     let pool: Pool | undefined;
     if (Object.values(DATA_SOURCE_VARIABLES).some((variable) => process.env[variable]?.trim() === "postgres")) {
-      pool = (await import("./config/postgres.js")).default;
+      // The API's pool, with connection and statement timeouts (config/postgresOptions.ts).
+      pool = (await import("./config/postgres.js")).createApiPool();
     }
 
     const dataSources = loadDataSources(process.env);
+    const shutdownTimeoutMs = loadShutdownTimeout(process.env);
 
     if (usesMongo(dataSources)) {
       await connectDB();
@@ -76,16 +80,40 @@ async function startServer() {
       console.log("Authentication rate limits: OFF (AUTH_RATE_LIMIT=false, development only)");
     }
 
+    // Readiness covers exactly the stores this configuration uses (health.ts).
+    const checks: ReadinessCheck[] = [];
+    const closers: Closer[] = [];
+    if (pool) {
+      const postgres = pool;
+      checks.push(postgresReadiness(postgres));
+      closers.push({ name: "PostgreSQL pool", close: () => postgres.end() });
+    }
+    if (usesMongo(dataSources)) {
+      checks.push(mongoReadiness(mongoose.connection));
+      closers.push({ name: "MongoDB connection", close: () => mongoose.disconnect() });
+    }
+    let shuttingDown = () => false;
+
     const app = createApp({
       repositories: createRepositories(dataSources, pool),
       sessionAuth,
       rateLimiter,
       trustProxyHops: clientIp.trustProxyHops,
+      readiness: { shuttingDown: () => shuttingDown(), checks },
     });
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
+
+    // Graceful shutdown (lifecycle.ts): drain requests, then close the databases.
+    const lifecycle = createShutdown({ server, closers, timeoutMs: shutdownTimeoutMs });
+    shuttingDown = lifecycle.shuttingDown;
+    for (const signal of ["SIGTERM", "SIGINT"] as const) {
+      process.on(signal, () => {
+        void lifecycle.shutdown(signal).then((clean) => process.exit(clean ? 0 : 1));
+      });
+    }
   } catch (error) {
     console.error(`Error: ${String(errorMessage(error))}`);
     process.exitCode = 1;
