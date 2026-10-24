@@ -82,6 +82,15 @@ describe("brute force on the legacy login", () => {
     }
   });
 
+  test("simultaneous wrong passwords: exactly the account limit is checked (counted before the check)", async () => {
+    await createUser();
+    const app = appWith({ rules: { ...RULES, loginPerIp: { ...RULES.loginPerIp, limit: 100 } } });
+    const statuses = (await Promise.all(Array.from({ length: 10 }, () => login(app, "alice@example.com", "wrong-password-0"))))
+      .map((response) => response.status).sort();
+    expect(statuses).toEqual([401, 401, 401, 429, 429, 429, 429, 429, 429, 429]);
+    expect((await login(app, "alice@example.com")).status).toBe(429);
+  });
+
   test("unknown accounts are limited exactly like real ones (no existence signal)", async () => {
     await createUser();
     const app = appWith({ rules: { ...RULES, loginPerIp: { ...RULES.loginPerIp, limit: 100 } } });

@@ -122,18 +122,21 @@ export class AuthRateLimiter {
    * Password check with the per-account failure limit. A locked account is
    * refused before the password is checked, even if it is right, and unknown
    * emails are counted exactly like known ones.
+   *
+   * The attempt is counted (one atomic increment) before the password is
+   * checked, so simultaneous attempts cannot all see the count from before the
+   * burst: at most `limit` checks run per window, however many arrive at once.
+   * A wrong password keeps its count; the right one clears the account's count.
+   * If the check itself fails, the attempt stays counted (fail closed).
    */
   async authenticate(users: UserRepository, email: string, password: string): Promise<LimitedLogin> {
     const rule = this.rules.loginFailuresPerAccount;
     const key = this.key(rule, email);
-    const failures = await this.store.peek(key);
-    if (failures.hits >= rule.limit) return { kind: "limited", retryAfterSeconds: failures.resetInSeconds };
+    const attempt = await this.store.hit(key, rule.windowSeconds);
+    if (attempt.hits > rule.limit) return { kind: "limited", retryAfterSeconds: attempt.resetInSeconds };
 
     const user = await users.authenticate(email, password);
-    if (!user) {
-      await this.store.hit(key, rule.windowSeconds);
-      return { kind: "invalid" };
-    }
+    if (!user) return { kind: "invalid" };
     await this.store.clear(key);
     return { kind: "authenticated", user };
   }
