@@ -3,6 +3,7 @@ import cors from "cors";
 
 import { createProtect } from "./middleware/authMiddleware.js";
 import { errorHandler, notFound } from "./middleware/errorHandlers.js";
+import { writeFreeze as refuseWrites } from "./middleware/writeFreeze.js";
 import { createRepositories } from "./repositories/index.js";
 import type { Repositories } from "./repositories/types.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -27,6 +28,8 @@ export interface AppOptions {
   rateLimiter?: AuthRateLimiter;
   /** GET /readyz: the data stores to check and the shutdown state (server.ts). Absent: ready, nothing to check. */
   readiness?: Readiness;
+  /** WRITE_FREEZE (middleware/writeFreeze.ts): refuse writes to shop data with 503. */
+  writeFreeze?: boolean;
   /** Reverse proxies in front of Express (TRUST_PROXY_HOPS). 0: X-Forwarded-For is ignored. */
   trustProxyHops?: number;
 }
@@ -35,7 +38,7 @@ export interface AppOptions {
 // so tests can exercise it in-process. Call after environment variables load.
 export function createApp({
   repositories = createRepositories(), sessionAuth, rateLimiter, trustProxyHops = 0,
-  readiness = { shuttingDown: () => false, checks: [] },
+  readiness = { shuttingDown: () => false, checks: [] }, writeFreeze = false,
 }: AppOptions = {}): Express {
   const app = express();
   // No framework fingerprint in responses.
@@ -72,6 +75,9 @@ export function createApp({
   });
 
   app.use(cors({ origin: (origin, callback) => callback(null, origin === undefined || allowedOrigins.has(origin)) }));
+
+  // Maintenance: after CORS (the browser can read the 503), before any body is read.
+  if (writeFreeze) app.use(refuseWrites);
 
   app.use(express.json());
 

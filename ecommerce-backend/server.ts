@@ -22,6 +22,7 @@ import { createRepositories } from "./repositories/index.js";
 import { errorMessage } from "./utils/errors.js";
 import { mongoReadiness, postgresReadiness, type ReadinessCheck } from "./health.js";
 import { createShutdown, loadShutdownTimeout, type Closer } from "./lifecycle.js";
+import { loadWriteFreeze } from "./middleware/writeFreeze.js";
 
 dotenv.config();
 
@@ -46,6 +47,8 @@ async function startServer() {
 
     const dataSources = loadDataSources(process.env);
     const shutdownTimeoutMs = loadShutdownTimeout(process.env);
+    const writeFreeze = loadWriteFreeze(process.env);
+    if (writeFreeze) console.log("WRITE FREEZE: ON (WRITE_FREEZE=true): writes to shop data are refused with 503");
 
     if (usesMongo(dataSources)) {
       await connectDB();
@@ -102,6 +105,7 @@ async function startServer() {
       rateLimiter,
       trustProxyHops: clientIp.trustProxyHops,
       readiness: { shuttingDown: () => shuttingDown(), checks },
+      writeFreeze,
     });
 
     const server = app.listen(PORT, () => {
