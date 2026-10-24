@@ -98,7 +98,8 @@ export function createProductController(products: ProductRepository, deliveryOpt
     try {
       res.json(await products.list());
     } catch (error) {
-      res.status(500).json({ message: errorMessage(error) });
+      console.error("Product list failed:", errorMessage(error));
+      res.status(500).json({ message: "Unable to load products" } satisfies ErrorResponse);
     }
   };
 
@@ -193,7 +194,8 @@ export function createProductController(products: ProductRepository, deliveryOpt
 
       return res.json(options);
     } catch (error) {
-      return res.status(500).json({ message: errorMessage(error) });
+      console.error("Delivery options failed:", errorMessage(error));
+      return res.status(500).json({ message: "Unable to load delivery options" } satisfies ErrorResponse);
     }
   };
 

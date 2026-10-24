@@ -3,7 +3,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import request from "supertest";
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApp } from "../../app.js";
 import type { DataSourceConfig } from "../../config/dataSources.js";
 import { migrate } from "../../db/migrator.js";
@@ -673,5 +673,27 @@ describe("order status (admin, audited)", () => {
     expect((await setStatus(order.id, { status: "delivered", reason: "skip ahead" })).body)
       .toEqual({ message: "Order status transition placed -> delivered is not allowed" });
     expect(await count("order_status_events")).toBe(1);
+  });
+});
+
+describe("database errors are not shown to clients (Phase 7A finding)", () => {
+  // Before the fix both endpoints answered with the driver's message, e.g. 'relation "delivery_options" does not exist'.
+  test.each([
+    ["/api/products", "products", "Unable to load products", "Product list failed:"],
+    ["/api/delivery-options?expand=estimatedDeliveryTime", "delivery_options", "Unable to load delivery options", "Delivery options failed:"],
+  ])("GET %s answers a fixed message and logs the detail server-side", async (path, table, message, logLabel) => {
+    await sql(`ALTER TABLE ${table} RENAME TO ${table}_hidden`);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await app().get(path);
+      expect(response.status).toBe(500);
+      expect(response.headers["content-type"]).toMatch(/application\/json/);
+      expect(response.body).toEqual({ message });
+      expect(response.text).not.toMatch(/relation|does not exist|postgres|SELECT|at \S+\.(js|ts)/i);
+      expect(errors).toHaveBeenCalledWith(logLabel, expect.stringMatching(/does not exist/));
+    } finally {
+      errors.mockRestore();
+      await sql(`ALTER TABLE ${table}_hidden RENAME TO ${table}`);
+    }
   });
 });
