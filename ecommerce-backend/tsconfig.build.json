@@ -27,7 +27,8 @@
     "utils/**/*.ts",
     "scripts/dbMigrate.ts",
     "scripts/dataMigrate.ts",
-    "scripts/sessionsCleanup.ts"
+    "scripts/sessionsCleanup.ts",
+    "scripts/reconcile.ts"
   ],
   "exclude": ["node_modules", "dist", "test"]
 }

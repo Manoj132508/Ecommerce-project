@@ -22,8 +22,10 @@
 //   - verifyRollbackTarget() is the only readiness gate. It refuses a MongoDB
 //     that lacks any PostgreSQL record: an older snapshot is never "ready".
 //
-// Proof of concept: exercised against disposable databases only
-// (test/db/reconciliation.test.ts). There is deliberately no npm script.
+// Exercised against disposable databases only (test/db/reconciliation.test.ts,
+// test/db/reconcileCli.test.ts). Operators run it through scripts/reconcile.ts
+// (reconcile:plan, reconcile:apply, reconcile:verify), which refuses remote
+// databases without an explicit flag and apply without frozen writes.
 import { createHash, randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import type { Pool } from "pg";
