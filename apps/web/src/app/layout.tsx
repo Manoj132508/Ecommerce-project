@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { Container } from "@/components/layout/Container";
 import { SiteFooter } from "@/components/layout/SiteFooter";
@@ -20,7 +21,10 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false, date: false, address: false, email: false },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Every page is rendered per request, so each gets the Content-Security-Policy
+  // nonce from src/proxy.ts (a prerendered page would carry scripts without it).
+  await connection();
   return (
     <html lang="en" className={inter.variable}>
       <body className="flex min-h-screen flex-col">
