@@ -84,7 +84,9 @@ export const test = base.extend<{ problems: PageProblems; timings: void }, { lau
   problems: async ({ page }, provide) => {
     const problems: PageProblems = { consoleErrors: [], failedRequests: [] };
     page.on("console", (message) => {
-      if (message.type() === "error") problems.consoleErrors.push(message.text());
+      if (message.type() !== "error") return;
+      if (screenshotting.has(page) && message.text() === PLAYWRIGHT_SCREENSHOT_STYLE_REFUSED) return;
+      problems.consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => problems.consoleErrors.push(`pageerror: ${error.message}`));
     page.on("response", (response) => {
@@ -227,9 +229,26 @@ export async function settle(page: Page) {
   ]));
 }
 
+/**
+ * In WebKit, Playwright's screenshot code inserts an inline <style> into the
+ * page, whatever the options, and the app's Content-Security-Policy refuses it
+ * (one console error per screenshot; Chromium and Firefox insert it without
+ * the page's policy). That one message is ignored only while snapshot() takes
+ * a screenshot of that page; any violation at another moment still fails.
+ */
+const PLAYWRIGHT_SCREENSHOT_STYLE_REFUSED = "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy.";
+const screenshotting = new WeakSet<Page>();
+
 /** Full-page screenshot for the visual review, per project. */
 export async function snapshot(page: Page, project: string, name: string) {
-  await page.screenshot({ path: path.join("test-results", "screenshots", project, `${name}.png`), fullPage: true, animations: "disabled" });
+  screenshotting.add(page);
+  try {
+    await page.screenshot({ path: path.join("test-results", "screenshots", project, `${name}.png`), fullPage: true, animations: "disabled" });
+    // The console message arrives after the screenshot resolves; one round trip lets it in.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+  } finally {
+    screenshotting.delete(page);
+  }
 }
 
 /** The page never scrolls sideways at this viewport. */
