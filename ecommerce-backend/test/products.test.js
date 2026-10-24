@@ -71,7 +71,7 @@ describe("GET /api/products", () => {
     await seedCatalog();
     const response = await api().get(`/api/products/${PRODUCTS.socks._id}`);
     expect(response.status).toBe(404);
-    expect(response.headers["content-type"]).toMatch(/text\/html/);
+    expect(response.body).toEqual({ message: "Not found" });
 
     const [socks] = (await api().get("/api/products")).body;
     expect(socks).toMatchObject({

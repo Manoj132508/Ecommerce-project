@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 
 import { createProtect } from "./middleware/authMiddleware.js";
+import { errorHandler, notFound } from "./middleware/errorHandlers.js";
 import { createRepositories } from "./repositories/index.js";
 import type { Repositories } from "./repositories/types.js";
 import productRoutes from "./routes/productRoutes.js";
@@ -31,6 +32,8 @@ export interface AppOptions {
 // so tests can exercise it in-process. Call after environment variables load.
 export function createApp({ repositories = createRepositories(), sessionAuth, rateLimiter, trustProxyHops = 0 }: AppOptions = {}): Express {
   const app = express();
+  // No framework fingerprint in responses.
+  app.disable("x-powered-by");
   // Only the configured number of hops is believed; a client cannot add more.
   app.set("trust proxy", trustProxyHops);
   const protect = createProtect(repositories.users, sessionAuth);
@@ -82,6 +85,11 @@ export function createApp({ repositories = createRepositories(), sessionAuth, ra
   app.use("/api", productRoutes(repositories, protect));
   app.use("/api", cartRoutes(repositories, protect));
   app.use("/api", orderRoutes(repositories, protect));
+
+  // JSON for unknown routes and for errors (malformed or oversized bodies),
+  // never Express's HTML page with a stack trace.
+  app.use(notFound);
+  app.use(errorHandler());
 
   return app;
 }
