@@ -38,8 +38,15 @@ test.describe("accounts", () => {
     await expect(page.getByRole("button", { name: isCompact(page) ? /^Menu/ : "Sign out" })).toBeVisible();
 
     await signOutFromHeader(page);
-    const guarded = await page.goto("/account");
+    // The guard check runs in a new page of the same browser context (same cookies). The signed-out
+    // page is still applying its own router.refresh(); navigating it at that moment raced the refresh
+    // in WebKit and Firefox on CI ("interrupted by another navigation", NS_BINDING_ABORTED, an aborted
+    // fetch). Nothing about the app's behaviour is relaxed: /account must still send a signed-out
+    // visitor to sign in.
+    const fresh = await page.context().newPage();
+    const guarded = await fresh.goto("/account");
     expect(guarded?.url()).toMatch(/\/login\?from=%2Faccount$/);
+    await fresh.close();
     expectCleanPage(problems, { allow: [/401 \(Unauthorized\)/] });
   });
 
