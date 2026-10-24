@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useReturnPath } from "@/hooks/useReturnPath";
+import { useValuesTypedBeforeHydration } from "@/hooks/useValuesTypedBeforeHydration";
 import { ApiError } from "@/lib/api/client";
 import { useAppDispatch } from "@/store/hooks";
 import { noticeShown } from "@/store/uiSlice";
@@ -42,6 +43,9 @@ export function RegisterForm() {
   const [values, setValues] = useState<Record<Field, string>>({ name: "", email: "", password: "", confirmPassword: "" });
   const [errors, setErrors] = useState<RegisterErrors>({});
   const [visible, setVisible] = useState<Partial<Record<Field, boolean>>>({});
+  useValuesTypedBeforeHydration(Object.fromEntries(ORDER.map((field) => [
+    `register-${field}`, (value: string) => setValues((current) => ({ ...current, [field]: value })),
+  ])));
   const loginHref = returnPath === "/" ? "/login" : `/login?from=${encodeURIComponent(returnPath)}`;
 
   // An address that is already registered belongs to the email field; other failures to the form.

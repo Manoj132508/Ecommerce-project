@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useReturnPath } from "@/hooks/useReturnPath";
+import { useValuesTypedBeforeHydration } from "@/hooks/useValuesTypedBeforeHydration";
 import { ApiError } from "@/lib/api/client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { noticeDismissed } from "@/store/uiSlice";
@@ -33,6 +34,7 @@ export function LoginForm() {
   const [errors, setErrors] = useState<LoginErrors>({});
   const emailInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
+  useValuesTypedBeforeHydration({ "login-email": setEmail, "login-password": setPassword });
 
   // Wrong credentials concern both fields; other server errors (rate limit, outage) neither.
   const credentialsRejected = signIn.error instanceof ApiError && signIn.error.status === 401;

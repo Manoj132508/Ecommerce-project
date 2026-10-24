@@ -61,6 +61,42 @@ test.describe("accounts", () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
+  // Phase 7A: text typed before React hydrated the form stayed on screen but not
+  // in state, so submitting said "Enter your email address." (WebKit, every run).
+  // The app's scripts are held back here so the typing happens before hydration.
+  test("sign-in and registration keep what was typed before the page hydrated", async ({ page }) => {
+    const holdScripts = async () => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      await page.route("**/_next/static/chunks/**/*.js", async (route) => { await released; await route.continue(); });
+      return async () => {
+        release();
+        await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Sign in" }).or(page.getByRole("button", { name: /^Menu/ })).first()).toBeVisible();
+        await page.unrouteAll({ behavior: "wait" });
+      };
+    };
+
+    const customer = newCustomer("Early");
+    let hydrate = await holdScripts();
+    await page.goto("/register", { waitUntil: "domcontentloaded" });
+    await page.getByLabel("Name").fill(customer.name);
+    await page.getByLabel("Email").fill(customer.email);
+    await page.getByLabel("Password", { exact: true }).fill(customer.password);
+    await page.getByLabel("Confirm password").fill(customer.password);
+    await hydrate();
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "account has been created" })).toBeVisible();
+
+    hydrate = await holdScripts();
+    await page.goto("/login?from=%2Forders", { waitUntil: "domcontentloaded" });
+    await page.getByLabel("Email").fill(customer.email);
+    await page.getByLabel("Password").fill(customer.password);
+    await hydrate();
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/orders$/);
+  });
+
   test("keyboard: skip link first, then search and sign-in, each with a visible focus ring", async ({ page, browserName }) => {
     test.skip(browserName === "webkit", "WebKit does not Tab to links by default (macOS/Safari preference); covered in Chromium and Firefox");
     await page.goto("/");
