@@ -11,7 +11,7 @@ import {
   usesPostgres,
 } from "./config/dataSources.js";
 import { verifySchemaCurrent } from "./db/pool.js";
-import { loadSessionAuthConfig } from "./auth/config.js";
+import { loadSessionAuthConfig, sessionActivation } from "./auth/config.js";
 import type { SessionAuth } from "./auth/sessionAuth.js";
 import { PostgresSessionRepository } from "./auth/sessionRepository.js";
 import { loadClientIpConfig } from "./auth/clientIp.js";
@@ -57,13 +57,15 @@ async function startServer() {
       console.log(`Data sources: ${describeDataSources(dataSources)}`);
     }
 
-    // Cookie sessions: development only, off unless AUTH_COOKIE_SESSIONS=true.
+    // Cookie sessions: off unless AUTH_COOKIE_SESSIONS=true; development, or a
+    // staging service under the restrictions in auth/config.ts. Production refuses.
     let sessionAuth: SessionAuth | undefined;
     const sessionConfig = loadSessionAuthConfig(process.env, dataSources);
     if (sessionConfig) {
       if (!pool) throw new Error("PostgreSQL pool missing");
       sessionAuth = { config: sessionConfig, sessions: new PostgresSessionRepository(pool, sessionConfig) };
-      console.log(`Cookie sessions: enabled (${sessionConfig.secureCookie ? "Secure __Host- cookie" : "local HTTP development cookie"})`);
+      const activation = sessionActivation(process.env);
+      console.log(`Cookie sessions: enabled for ${activation === "staging" ? `STAGING (service ${process.env.RENDER_SERVICE_NAME?.trim()}; production refuses this)` : "development"} (${sessionConfig.secureCookie ? "Secure __Host- cookie" : "local HTTP development cookie"})`);
     }
 
     // Authentication rate limits (R37): counters in the database that holds the

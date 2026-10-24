@@ -13,6 +13,7 @@ import {
   loadSessionAuthConfig,
   SECURE_COOKIE_NAME,
   SessionConfigError,
+  sessionActivation,
   type SessionAuthConfig,
 } from "../../auth/config.js";
 import type { SessionAuth } from "../../auth/sessionAuth.js";
@@ -157,6 +158,51 @@ describe("configuration (auth/config.ts)", () => {
   test("refused in production, and without PostgreSQL users", () => {
     expect(() => loadSessionAuthConfig(env({ NODE_ENV: "production" }), PG_USERS)).toThrow(/cannot be enabled with NODE_ENV=production/);
     expect(() => loadSessionAuthConfig(env({}), ALL_MONGO)).toThrow(/DATA_SOURCE_USERS=postgres/);
+  });
+
+  describe("staging allowance (NODE_ENV=production on a staging service)", () => {
+    const STAGING = {
+      NODE_ENV: "production", DEPLOYMENT_ENVIRONMENT: "staging", AUTH_COOKIE_SESSIONS_STAGING: "true",
+      RENDER_SERVICE_NAME: "ecommerce-api-staging", AUTH_ALLOWED_ORIGINS: "https://ecommerce-web-staging.vercel.app",
+    };
+
+    test("allowed when every staging condition holds, with the secure cookie", () => {
+      expect(loadSessionAuthConfig(env(STAGING), PG_USERS)).toMatchObject({
+        cookieName: SECURE_COOKIE_NAME, secureCookie: true, allowedOrigins: new Set(["https://ecommerce-web-staging.vercel.app"]),
+      });
+      expect(sessionActivation(STAGING)).toBe("staging");
+      expect(sessionActivation({})).toBe("development");
+    });
+
+    test.each([
+      ["DEPLOYMENT_ENVIRONMENT missing", { DEPLOYMENT_ENVIRONMENT: undefined }, /DEPLOYMENT_ENVIRONMENT is "", not "staging"/],
+      ["DEPLOYMENT_ENVIRONMENT=production", { DEPLOYMENT_ENVIRONMENT: "production" }, /not "staging"/],
+      ["DEPLOYMENT_ENVIRONMENT=Staging (exact value only)", { DEPLOYMENT_ENVIRONMENT: "Staging" }, /not "staging"/],
+      ["no explicit staging opt-in", { AUTH_COOKIE_SESSIONS_STAGING: undefined }, /AUTH_COOKIE_SESSIONS_STAGING=true/],
+      ["staging opt-in false", { AUTH_COOKIE_SESSIONS_STAGING: "false" }, /AUTH_COOKIE_SESSIONS_STAGING=true/],
+      ["no host service name", { RENDER_SERVICE_NAME: undefined }, /must end in "-staging"/],
+      ["a production-looking service", { RENDER_SERVICE_NAME: "ecommerce-api" }, /must end in "-staging"/],
+      ["staging only in the middle", { RENDER_SERVICE_NAME: "ecommerce-staging-api" }, /must end in "-staging"/],
+      ["insecure cookie", { AUTH_COOKIE_SECURE: "false" }, /AUTH_COOKIE_SECURE cannot be false/],
+      ["the production storefront allowed", { AUTH_ALLOWED_ORIGINS: "https://ecommerce-web-staging.vercel.app,https://ecommerce-project-three-peach.vercel.app" }, /production storefront/],
+    ])("refused: %s", (_, change, message) => {
+      const values = { ...env(STAGING), ...change } as Record<string, string | undefined>;
+      for (const [key, value] of Object.entries(values)) if (value === undefined) delete values[key];
+      expect(() => loadSessionAuthConfig(values, PG_USERS)).toThrow(SessionConfigError);
+      expect(() => loadSessionAuthConfig(values, PG_USERS)).toThrow(message);
+    });
+
+    test("production-shaped settings still refuse, whatever else is set", () => {
+      // What a production service has, plus AUTH_COOKIE_SESSIONS=true switched on by mistake.
+      const production = {
+        NODE_ENV: "production", AUTH_COOKIE_SESSIONS: "true", AUTH_ALLOWED_ORIGINS: "https://ecommerce-project-three-peach.vercel.app",
+        RENDER_SERVICE_NAME: "ecommerce-backend", CLIENT_URL: "https://ecommerce-project-three-peach.vercel.app", POSTGRES_PRODUCTION_ENABLED: "true",
+      };
+      expect(() => loadSessionAuthConfig(production, PG_USERS)).toThrow(/development feature and cannot be enabled with NODE_ENV=production yet/);
+      // Copying the staging switches into production is not enough either.
+      expect(() => loadSessionAuthConfig({ ...production, DEPLOYMENT_ENVIRONMENT: "staging", AUTH_COOKIE_SESSIONS_STAGING: "true" }, PG_USERS)).toThrow(/must end in "-staging"/);
+      expect(() => loadSessionAuthConfig({ ...production, DEPLOYMENT_ENVIRONMENT: "staging", AUTH_COOKIE_SESSIONS_STAGING: "true", RENDER_SERVICE_NAME: "ecommerce-backend-staging" }, PG_USERS)).toThrow(/production storefront/);
+    });
   });
 
   test("secure by default: __Host- cookie, HTTPS origins only", () => {

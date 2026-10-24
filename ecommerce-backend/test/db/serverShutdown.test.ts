@@ -41,7 +41,8 @@ describe.skipIf(process.platform === "win32")("server.ts graceful shutdown (SIGT
     child = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
       cwd: BACKEND,
       env: {
-        PATH: process.env.PATH, PORT: String(port), JWT_SECRET: "shutdown-test-only-secret",
+        // MONGODB_URI empty: server.ts loads a local .env, and dotenv never overrides a variable that is set.
+        PATH: process.env.PATH, PORT: String(port), MONGODB_URI: "", JWT_SECRET: "shutdown-test-only-secret",
         DATABASE_URL: db.url, DATA_SOURCE_DELIVERY_OPTIONS: "postgres", DATA_SOURCE_PRODUCTS: "postgres",
         DATA_SOURCE_USERS: "postgres", DATA_SOURCE_CARTS: "postgres", DATA_SOURCE_ORDERS: "postgres",
         PG_STATEMENT_TIMEOUT_MS: "5000", SHUTDOWN_TIMEOUT_MS: "4000",
