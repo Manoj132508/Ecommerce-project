@@ -1,8 +1,14 @@
 # Running the manual screen-reader pass
 
 How to execute `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md` with **NVDA + Firefox on Windows** and **VoiceOver + Safari on
-iPhone**. Status: **not yet performed** — no item in the checklist has been ticked. Automated checks (axe, keyboard,
-zoom, reflow, forced colours, reduced motion) do not replace it.
+iPhone**. Status: **not yet performed** — no item in the checklist has been ticked (checked 2026-10-24). Automated
+checks (axe, keyboard, zoom, reflow, forced colours, reduced motion) do not replace it. Run it on the release
+candidate (the 7A security commits up to `d5510cb` or later): since `4549772` every page is rendered per request
+under a Content-Security-Policy, and nothing visible should differ — note anything that does.
+
+One addition to the checklist since 7A: with the API on `WRITE_FREEZE=true` (local or staging only), add a product
+to the cart and submit a checkout — the maintenance message ("The shop is read-only for a few minutes…") must be
+announced, focus must stay usable, and nothing may be added or ordered.
 
 ## Before you start (both)
 

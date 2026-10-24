@@ -229,6 +229,7 @@ machine with PostgreSQL 17 client tools, `pg_dump "$env:DATABASE_URL" -Fc -f bac
 | A schema migration must be undone | `npm.cmd run db:rollback -- --confirm` (latest only; repeat for earlier ones) |
 | Anything else, or data must be preserved | Restore the backup taken before the change (below) |
 | A problem after PostgreSQL goes live (Phase 4) | Switch the affected data source back to MongoDB (MIGRATION_PLAN.md §8). MongoDB stays authoritative until cut-over |
+| A problem after writes resumed on PostgreSQL (R31) | Freeze writes (`WRITE_FREEZE=true`, restart the API), back up both databases, then `npm.cmd run reconcile:plan`, `npm.cmd run reconcile:apply -- --confirm --writes-frozen`, and switch back only when `npm.cmd run reconcile:verify` exits 0 (MIGRATION_PLAN.md §6 Phase 4). Local databases only unless `--allow-remote-postgres` / `--allow-remote-mongodb` under an approved plan; reports go to `migration-reports/` (git-ignored) with counts and ids only |
 
 `data:rollback --confirm` refuses, and removes nothing, when:
 
