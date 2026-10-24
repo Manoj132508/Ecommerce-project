@@ -182,7 +182,11 @@ export async function openCartDrawer(page: Page) {
  */
 export async function signOutFromHeader(page: Page) {
   const currentPath = new URL(page.url()).pathname;
-  const refreshed = page.waitForResponse((response) => response.request().headers()["rsc"] === "1" && new URL(response.url()).pathname === currentPath);
+  // The refresh itself, not a link prefetch (which also carries RSC: 1, plus Next-Router-Prefetch).
+  const refreshed = page.waitForResponse((response) => {
+    const headers = response.request().headers();
+    return headers["rsc"] === "1" && !headers["next-router-prefetch"] && new URL(response.url()).pathname === currentPath;
+  });
   if (isCompact(page)) await page.getByRole("button", { name: /^Menu/ }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
