@@ -191,6 +191,10 @@ export async function signOutFromHeader(page: Page) {
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await refreshed;
+  // The refreshed page is applied just after its response (a history update WebKit counts as a
+  // navigation; CI run 40086240119). Next.js exposes no "refresh committed" signal, so wait until the
+  // page has stopped making requests: a state condition, not a longer timeout or a retry.
+  await page.waitForLoadState("networkidle");
 }
 
 /** Runs SQL against the throwaway test database (never the development database). */
