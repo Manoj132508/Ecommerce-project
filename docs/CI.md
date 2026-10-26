@@ -34,7 +34,9 @@ Browsers are installed with the official Playwright procedure in two bounded ste
 the tests themselves took 1–3 minutes; in the 4 runs since (40084134454 – 40090794620) the browser step took 0–8 s and
 the OS-package step 11–51 s. `actions/cache` saves only when the job succeeds, so an engine whose jobs fail keeps
 downloading (3–5 s for WebKit); the step timings show hits for Chromium and Firefox from the second run on. The
-cache key includes the Playwright version, so an upgrade downloads fresh browsers. The suite starts its own
+cache key includes the Playwright version, so an upgrade downloads fresh browsers. The OS-package step still hangs now
+and then on the package mirrors (3 of 9 Browser runs: 2 before the install was split, 1 after — 40341123856, WebKit 1 worker, 912 s); the bound
+makes that a clear step failure, counted as a failed round. No retry or longer bound has been added. The suite starts its own
 throwaway stack (`browser/stack.mjs`). Timeouts and retries are those of `playwright.config.ts` (90 s per test, one
 retry for Firefox only); the workflow only sets the worker count.
 

@@ -1,4 +1,4 @@
-# Release readiness (Phase 7A, 2026-10-23 – 2026-10-24)
+# Release readiness (Phase 7A, 2026-10-23 – 2026-10-26)
 
 **Verdict: NO-GO for production.** Nothing has been deployed, no production database or setting was touched, and no
 cutover is approved. This report lists what was verified, what was measured, what is still open and the checklist
@@ -13,13 +13,14 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | Requirement | Evidence | Status | Risk | Next action |
 | --- | --- | --- | --- | --- |
 | CI: tests, typecheck, lint, builds, e2e on every PR | CI runs 40090794609 (`753f00b`) and 40094305039 (`c1caee0`, docs only): 11/11 jobs success each | PASS (on `c1caee0`) | Low | Keep required on PRs |
-| CI on the release candidate (second-pass commits up to `0e40af7`) | Not pushed: application/security commits need approval | NOT RUN | Medium: CI has not seen the fixes | Approve the push to `ci/phase7a-verification` |
+| CI on the release candidate | Pushed `c1caee0..9ed46cd` (approved). CI **40341123629: FAIL**, 9/11 jobs: PostgreSQL job — the Linux-only SIGTERM test exposed a real shutdown defect (keep-alive connections held until the timeout; fixed `ff8ca8b`) and one rate-limit test with a timing assumption (corrected `798ff88`); Vite job — `cartAuth.test.tsx` 1-s `findByRole` timeout in untouched code (passed locally and in every earlier CI run) | FAIL on `9ed46cd`; fixes local | Medium | Approve pushing `ff8ca8b`, `798ff88`, `7b2002a` and docs; then CI + 3 Browser runs on that SHA (§8) |
 | All suites on the release candidate, locally | Backend MongoDB 234 + 9 todo, PostgreSQL 306 + 1 skipped (Linux-only SIGTERM test, verified by hand on Linux), Next.js 240, Vite 47, proxy e2e 52, pages e2e 92, typecheck, lint, builds, `npm audit` 0 ×3 | PASS (local) | Low | Same in CI after the push |
 | Dependency audit, 0 advisories (3 packages) | CI 40084134395 failed on a new advisory (body-parser); fixed `c5056fd`; green since (40086240138, 40088693261, 40090794609) | PASS | Low — new advisories can appear any day | Fix or accept within days when the audit job fails |
 | No server-only variable in client bundles | `build` job check, every CI run | PASS | Low | — |
 | Chromium (desktop, tablet, mobile) | CI: 16/16 jobs success in 8 browser runs, 0 flaky (91 passed, 8 skipped per job on `753f00b`/`c1caee0`). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 103 passed, 0 failed, 0 flaky, 8 skipped each | PASS | Low | — |
 | WebKit (desktop, iPhone) | Failed in every run before `753f00b` (hydration bug, fixed `73ddf7c`; sign-out race in a test, fixed `753f00b`); Browsers 40090794620 and 40094305058: 47 passed, 0 failed, 0 flaky, 19 skipped at 1 and 2 workers (two consecutive clean runs on the `753f00b` code). Release candidate, locally: on `d5510cb` 9–10 failures per round (pre-hydration form bug, fixed `fbee7e1`; Playwright screenshot style, harness fix `0e40af7`); then 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 55 passed, 0 failed, 0 flaky, 19 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
 | Firefox (desktop) | Passed in 5 of 7 runs; failed in 39998439611 (1 worker, cause not recorded: annotations did not exist yet) and in 40088693317 (both jobs, the sign-out race, made worse by `96128da`, reverted); 40090794620 and 40094305058: 26 passed, 0 failed, **0 flaky**, 7 skipped at 1 and 2 workers (two consecutive clean runs). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 30 passed, 0 failed, **0 flaky** (no retry used), 7 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
+| Browser run on `9ed46cd` | **40341123856: FAIL**, 6/7 jobs success: Chromium 103/0/0 ×2, Firefox 30/0/0 ×2, WebKit (2 workers) 55/0/0; WebKit (1 worker) — **infrastructure**: `Install webkit OS dependencies` (apt) timed out at the 15-min bound, suite skipped | FAIL (infra) | Medium: apt mirror slowness recurs (3 of 9 Browser runs; 1 since the split) | Count as a failed round; no timeout or retry change without approval (§8) |
 | Browser install bounded and cached | Install 696–2,692 s before `fce094d`; 0–51 s in the 4 runs after (§5) | PASS | Low | — |
 | Security review (code + probes) | §2 | PASS (review done) | — | — |
 | High-severity findings fixed | body-parser `c5056fd` | PASS | — | Production API still runs the vulnerable version until a deploy |
@@ -35,7 +36,8 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | Next.js storefront can sign in against production API | Impossible while the guard is on (by design) | BLOCKED | High | A separate, approved production change after staging |
 | `NODE_ENV=production` set on Render | Not visible from the repository | NOT RUN | Low since `2952952` (no stack traces in any environment); guards still depend on it | Owner checks the Render dashboard |
 | Production MongoDB provider and restore-tested backup | Unknown: no tracked metadata; the local `.env` points at a local MongoDB (§6) | BLOCKED | Blocker for any data step | Owner reads the `MONGODB_URI` host in the Render dashboard |
-| R31 rollback after writes resume | Write freeze `94e08b9` and CLI `d5510cb` built and tested on disposable databases; no batching yet; not rehearsed | BLOCKED (for production) | High | Batching; rehearsal on restored copies in 7B |
+| R31 rollback after writes resume | Write freeze `94e08b9`, CLI `d5510cb`, batched writes and a pre-flight size guard `7b2002a` (apply at 20,000 users/orders: 27 s → 6 s; guard 25,000 per table, ~0.6 GB measured at 20,000); runbook `docs/CUTOVER_RUNBOOK.md`; all on disposable databases | BLOCKED (for production) | High | Rehearsal on restored copies in 7B; streaming for > 25,000 records if real volumes need it |
+| Live `main` dependencies | `main` has runtime advisories: backend proxy-addr critical, body-parser/express/path-to-regexp high, qs moderate; Vite app form-data critical, axios/react-router/turbo-stream high. Hotfix A (backend) prepared on local branch `hotfix/backend-express-4.22.3` (`bd8cb6a`): runtime audit 0, `node --test` 24/24, 35 requests identical before/after | BLOCKED (approval) | **High in production today** | Approve review → push → merge → deploy separately (`docs/HOTFIX_MAIN_DEPENDENCIES.md`); Hotfix B (Vite) to prepare |
 | Staging rehearsal | `docs/PHASE7B_STAGING_PLAN.md` (proposal) | NOT RUN | — | Needs approval |
 | Deployment, production DB change | None made | NOT RUN (by design) | — | — |
 
@@ -247,3 +249,56 @@ session expiry, sign out everywhere, the screen-reader checklist.
       rollback owner on call.
 - [ ] Monitoring: health check (`/readyz` exists since 7A; the host must be pointed at it), error logs and alerting in
       place before traffic moves.
+
+## 8. Phase 7A third pass (2026-10-26)
+
+**Push.** The eleven approved commits went to `ci/phase7a-verification` only, without force (`c1caee0..9ed46cd`);
+`main`, `migration/postgres`, `phase5/nextjs-foundation` and the backup branches unchanged.
+
+**CI on `9ed46cd` (run 40341123629): FAIL, 9/11 jobs success.** Every failure was investigated before anything
+changed:
+
+| Job | Failure | Cause | Action |
+| --- | --- | --- | --- |
+| Backend tests (PostgreSQL) | `serverShutdown.test.ts` exit 1 instead of 0 | **Real defect.** First Linux run of the SIGTERM test. Reproduced exactly in a Linux container ("requests still open after 4000 ms"): `server.close()` closes only connections idle at that moment, so a keep-alive connection whose request finished during the drain stayed open until the force timeout. Every shutdown behind a keep-alive client (the Next.js proxy) would have been forced, exit 1. An earlier check with `wget` (closes its connection) could not show it | `ff8ca8b`: idle connections closed every 100 ms while draining, `Connection: close` on late responses. New keep-alive unit test fails on the old code; exact Linux test passes twice (clean drain in 3.4–3.6 s, exit 0) |
+| Backend tests (PostgreSQL) | `authRateLimit.concurrent` "5 simultaneous right passwords: exactly one signs in" got 4 | **Wrong test assumption.** A successful sign-in clears the account's count (unchanged design), so right passwords that arrive after it start a fresh budget — they are the owner's. The guarantee concerns wrong guesses | `798ff88`: asserts that 5 simultaneous wrong passwords with one attempt left get exactly one more check; right passwords: every 200 has a session. The 12-attempt burst tests are unchanged and still fail on the old limiter |
+| Legacy Vite app | `cartAuth.test.tsx` "Unable to find link Socks" | **Timing flake in untouched code** (no Vite file changed since `c1caee0`): `findByRole`'s 1 s default on a loaded runner. Passed locally (18/18) and in all 9 earlier CI runs | Recorded; the Vite app is not altered (standing restriction). Watch for recurrence |
+
+**Browser on `9ed46cd` (run 40341123856): FAIL, 6/7 jobs success** — every job that ran its suite passed with
+0 failed, 0 flaky: Chromium 103 passed, 8 skipped (1 and 2 workers); Firefox 30 passed, 7 skipped (1 and 2 workers);
+WebKit 55 passed, 19 skipped (2 workers). WebKit (1 worker): `Install webkit OS dependencies` (apt packages) timed
+out at its 15-minute bound after 912 s, so the suite was skipped — infrastructure, the same apt slowness as run
+39998439611, now bounded instead of a 45-minute hang. Counted as a failed round, not hidden.
+
+**Security verification** (CI 40341123629 jobs that passed, plus the local suites on the final commit):
+
+| Area | Evidence |
+| --- | --- |
+| Concurrent sign-in limit | `authRateLimit.concurrent.test.ts` (7 tests): exactly the limit checked from 1 and 12 addresses; one attempt left → exactly one more check; failures of the check and of the store start no session; MongoDB suite: 10 simultaneous → exactly 3 |
+| Safe database errors | `errorResponses.test.js` (unreachable database), `api.postgres.test.ts` (renamed tables): fixed messages, detail only in the log |
+| JSON errors, no stack | `app.test.js` for production, development and unset `NODE_ENV`; compiled `dist` probed with `NODE_ENV=production` |
+| CSP | unit (`csp.test.ts`), browser (`csp.spec.ts`) in all 6 projects in CI run 40341123856 where the suite ran |
+| PostgreSQL timeouts, readiness, shutdown | `reliability.test.ts` against real PostgreSQL; `reliability.test.js` (incl. keep-alive); SIGTERM end to end on Linux |
+| CSRF, session expiry and revocation | `authSessions.test.ts` (PostgreSQL suite; all passed except the two tests above) and the proxy e2e (52/52 in CI) |
+| Admin role and customer ownership | PostgreSQL path: `api.postgres.test.ts` (401/403 for non-admins, 404 for another user's order or cart line), `authSessions.test.ts`, browser admin spec ("'Your orders' stays personal") and session-privacy spec. The MongoDB path keeps its known shared cart (R2, §1) |
+| Checkout idempotency and rollback | `api.postgres.test.ts` (interrupted checkout stores nothing; key reuse 422; stock never negative under concurrency) |
+| No production cookie sessions | `auth/config.ts` guard unchanged; `stagingGuard.test.ts` at `server.ts` start-up (exit 1 before listening) |
+| No sensitive data in bundles, logs, reports | CI build job client-bundle check; proxy e2e "no session token in the Express or Next.js logs"; reconcile reports without personal data or credentials (tested); browser artifacts hold counts, timings and runner load, failure artifacts only throwaway data |
+| `npm audit` | 0 in all three packages on the CI branch (CI audit jobs, 40341123629) |
+
+**R31 at production scale** (`7b2002a`, disposable databases only): measured 20,000 users + 20,000 orders + 40,000
+lines — plan 1.2 s, apply 27.2 s → **6.0 s** with ordered bulk writes of 500, verify 1.7 s, peak RSS ~0.57 GB
+(memory grows with size: one consistent snapshot is compared in memory). An interruption between batches leaves
+whole batches and a re-run completes without duplicates (tested). The CLI counts rows on both sides before loading
+and refuses above `--max-records` (default 25,000). Not done: streaming the snapshot for larger volumes — needed
+only if real volumes exceed the guard; real volumes are unknown until the MongoDB provider is known. Procedures:
+`docs/CUTOVER_RUNBOOK.md`.
+
+**Local suites on the fixed code (`7b2002a`):** PostgreSQL 309 passed, 2 skipped (the Linux-only SIGTERM test,
+verified in a Linux container; the opt-in scale test); MongoDB 235 passed, 9 todo; typecheck, build, `npm audit` 0.
+One local MongoDB run before that failed three test files at setup (`auth`, `authSecurity`, `deliveryOptions`; the
+in-memory server start; the error text was not captured) and did not reproduce: the file alone 24/24, the full suite
+again 235/235; CI ran the suite green on `9ed46cd`. Recorded as a local start-up flake.
+
+**Final CI on the fixed commit:** pending — the three fix commits (`ff8ca8b`, `798ff88`, `7b2002a`) and the docs
+are local and need approval to push; then CI and three Browser runs on that one SHA (the push, plus two re-runs).

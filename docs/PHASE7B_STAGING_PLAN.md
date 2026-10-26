@@ -14,7 +14,8 @@ data**, and collect the evidence the go/no-go checklist (`docs/RELEASE_READINESS
 
 1. Owner approval for Phase 7B, recorded with date and scope.
 2. Phase 7A commits reviewed; the CI workflow green on the commit to be staged, and the Browser workflow green on at
-   least 3 consecutive runs with no failed attempt (one so far: run 40090794620).
+   least 3 consecutive runs of that same commit with no failed attempt. Status 2026-10-26: `9ed46cd` failed CI
+   (40341123629) and Browser (40341123856); the fixes are local awaiting approval to push (RELEASE_READINESS.md §8).
 3. A decision on the code changes staging needs (see "Code changes required"), each as its own reviewed commit.
 4. A **sanitised** dataset: the test catalogue from `scripts/e2e-support.mjs` (`SEED_PRODUCTS`) or a copy of the
    development MongoDB with every email, name, address, phone and password hash replaced. Never a production dump.
@@ -25,8 +26,9 @@ data**, and collect the evidence the go/no-go checklist (`docs/RELEASE_READINESS
 | --- | --- | --- |
 | A staging-only allowance for cookie sessions (staging runs with `NODE_ENV=production` so it behaves like production) | `auth/config.ts` refuses `AUTH_COOKIE_SESSIONS=true` with `NODE_ENV=production`; the Next.js storefront cannot sign in without cookie sessions | **Done, `ae38316`.** Needs all of `DEPLOYMENT_ENVIRONMENT=staging`, `AUTH_COOKIE_SESSIONS_STAGING=true`, Render's `RENDER_SERVICE_NAME` ending in `-staging`, the Secure cookie, no production storefront origin. Logged at start-up. The production guard is unchanged; tests prove production-shaped settings still refuse at `server.ts` start-up, also with the staging switches copied in. Enabling cookie sessions in production remains a separate approval. |
 | Write-freeze maintenance mode | Cutover runbook step 2 (MIGRATION_PLAN.md R31) | **Done, `94e08b9`:** `WRITE_FREEZE=true` → 503 for writes to shop data; reads, sign-in and sign-out keep working. |
-| Reverse-reconciliation CLI around `db/reconciliation/reverse.ts` | Rollback after writes is not allowed without it | **Done, `d5510cb`:** `reconcile:plan / apply --confirm --writes-frozen / verify`; local only unless `--allow-remote-*`. **Still to do:** batched reads/writes before production volumes (the staging rehearsal with sanitised data does not need it). |
-| Fixes for the Medium findings in `RELEASE_READINESS.md` §2 | So staging rehearses the release candidate, not today's gaps | **Done:** `99db7ab`, `b63bdd7`, `2952952`, `4549772`, `d8d99c0`. |
+| Reverse-reconciliation CLI around `db/reconciliation/reverse.ts` | Rollback after writes is not allowed without it | **Done, `d5510cb`:** `reconcile:plan / apply --confirm --writes-frozen / verify`; local only unless `--allow-remote-*`. **Batched writes and a pre-flight size guard, `7b2002a`:** ordered bulk writes of 500 (apply at 20,000 users/orders 27 s → 6 s); refuses above `--max-records` (default 25,000 per table; ~0.6 GB RSS measured at 20,000). Not done: streaming the snapshot, needed only above the guard. |
+| Fixes for the Medium findings in `RELEASE_READINESS.md` §2 | So staging rehearses the release candidate, not today's gaps | **Done:** `99db7ab`, `b63bdd7`, `2952952`, `4549772`, `d8d99c0`; shutdown with keep-alive clients fixed `ff8ca8b` (found by CI 40341123629). |
+| Operator procedures | One ordered runbook for backup, freeze, verification, cutover, rollback, fix-forward | **Done:** `docs/CUTOVER_RUNBOOK.md` (procedure only; rehearsed first in step 7). |
 
 The service names in the steps below must therefore end in `-staging` (for example `ecommerce-api-staging`), and the
 Render health check should use `/readyz`.

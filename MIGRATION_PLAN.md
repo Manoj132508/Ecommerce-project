@@ -1181,6 +1181,7 @@ Owner decisions P1–P8 approved 2026-10-22 (spec §0).
   - **Not run on CI:** the release candidate is not pushed (no approval for application/security commits), so CI and Browser runs on `d5510cb` do not exist yet.
   - **Production MongoDB provider:** still unknown (no tracked metadata; the local `.env` points at a local MongoDB). Owner action: read the host of `MONGODB_URI` in the Render dashboard.
   - **R31:** write freeze and CLI built and tested on disposable databases; batching for production volumes, the staging rehearsal and approval remain.
+- [ ] **7A, third pass — CI verification (2026-10-26):** with approval, the eleven second-pass commits were pushed to `ci/phase7a-verification` only (`c1caee0..9ed46cd`, no force; other branches unchanged). **CI 40341123629 FAIL** (9/11): the first Linux run of the SIGTERM test found a **real shutdown defect** — keep-alive connections held until the force timeout, so every shutdown behind a keep-alive client would end forced, exit 1 (reproduced exactly in a Linux container; fixed `ff8ca8b`, new unit test fails on the old code); one rate-limit test asserted timing of right passwords rather than the bound on wrong guesses (corrected `798ff88`, burst tests unchanged); the Vite job hit a 1-s `findByRole` timeout in untouched code (recorded, Vite not altered). **Browser 40341123856 FAIL** (6/7): every suite that ran passed with 0 failed, 0 flaky (Chromium 103, Firefox 30, WebKit 55); WebKit 1-worker's apt install timed out at the 15-min bound (infrastructure). R31: batched writes and a pre-flight size guard (`7b2002a`; apply at 20,000 users/orders 27 s → 6 s; guard 25,000 per table), runbook `docs/CUTOVER_RUNBOOK.md`. Separate production hotfix for `main`'s runtime advisories prepared locally (`hotfix/backend-express-4.22.3`, `bd8cb6a`; `docs/HOTFIX_MAIN_DEPENDENCIES.md`), not pushed. Details: `docs/RELEASE_READINESS.md` §8. **Phase 7A decision: BLOCKED** until the fixed commit is green in CI with three clean Browser runs on one SHA.
 - [ ] 7.1 Point the production domain at the `apps/web` Vercel project
 - [ ] 7.2 After 2 weeks stable: `git rm -r ecommerce-project` (Vite) — it remains in git history and the backup branch
 - [ ] 7.3 `git mv ecommerce-backend apps/api` in a rename-only commit; update backend host root dir; add root `package.json` workspaces
@@ -1263,11 +1264,11 @@ Never run `docker compose down -v`, `git clean -fdx`, `git reset --hard`, or `dr
 
 ## 9. Immediate next step
 
-`origin/phase5/nextjs-foundation` is at `80c8ff4`. `origin/ci/phase7a-verification` is at `c1caee0` (7A first pass + docs). The 7A second pass (security fixes, staging prerequisites, the pre-hydration form fix: `c1caee0..HEAD`) is **local only**, awaiting approval to push to the CI branch. Nothing is merged or deployed. Verdict: **NO-GO** (`docs/RELEASE_READINESS.md`).
+`origin/ci/phase7a-verification` is at `9ed46cd` (CI and Browser failed there, causes in RELEASE_READINESS.md §8). Local and awaiting approval to push to that branch: `ff8ca8b`, `798ff88`, `7b2002a` and the third-pass docs. `origin/phase5/nextjs-foundation` `80c8ff4`, `main` `4e622f5`, unchanged. Nothing merged or deployed. Verdict: **NO-GO**; Phase 7A **BLOCKED**.
 
-1. Owner: review the second-pass commits; approve (or not) pushing them to `ci/phase7a-verification` only.
-2. After that push: the CI workflow green and **three consecutive clean Browser runs on that same commit** (the push gives one; re-run or dispatch for the others). Any failure is classified before anything changes; earlier failures stay in the record.
-3. Manual screen-reader pass (R41): `docs/SCREEN_READER_TEST_GUIDE.md` with `docs/ACCESSIBILITY_MANUAL_CHECKLIST.md` — still not performed.
-4. Owner checks (no code): the production MongoDB provider (host of `MONGODB_URI` in the Render dashboard), `NODE_ENV=production` on Render, the Render health check path (`/readyz` once deployed). The deployed API still has the vulnerable body-parser until a separate, approved deploy.
-5. Before a production-volume rollback could be rehearsed: batching in the reconciliation (R31).
-6. Phase 7B (staging rehearsal, `docs/PHASE7B_STAGING_PLAN.md`) only with explicit approval; its code prerequisites now exist (staging cookie-session allowance with the production guard kept, write freeze, reconciliation CLI).
+1. Owner: approve pushing the fix and docs commits to `ci/phase7a-verification` only.
+2. On that one SHA: CI 11/11 green, and three clean Browser rounds (the push, then "Re-run all jobs" twice, one after the other). Any failure, including an apt install timeout, is classified and the round counted as failed.
+3. Separately, the production hotfix (`docs/HOTFIX_MAIN_DEPENDENCIES.md`): approve review, push of the hotfix branch, merge into `main` and Render deploy as four separate decisions. Hotfix B (live Vite app dependencies) still to prepare.
+4. Manual screen-reader pass (R41) — still pending.
+5. Owner checks: production MongoDB provider and record counts (the reconciliation guard is 25,000 per table), `NODE_ENV=production` on Render.
+6. Phase 7B only with explicit approval (`docs/PHASE7B_STAGING_PLAN.md`, `docs/CUTOVER_RUNBOOK.md`).
