@@ -48,16 +48,30 @@ export function createShutdown({ server, closers, timeoutMs, log = console.log }
   let started: Promise<boolean> | undefined;
 
   const drain = () => new Promise<boolean>((resolve) => {
-    // Stops accepting; resolves once every connection has closed. Node also closes idle keep-alive connections here.
+    // Stops accepting; resolves once every connection has closed.
     server.close(() => resolve(true));
+    // server.close() only closes connections idle at this moment. A keep-alive
+    // connection whose request finishes later would stay open until the force
+    // timeout (CI run 40341123629), so idle ones are closed until none is left,
+    // and responses to requests that still arrive on them ask the client to close.
+    const closeAfterResponse = (_request: unknown, response: { setHeader: (name: string, value: string) => void }) => {
+      response.setHeader("Connection", "close");
+    };
+    server.on("request", closeAfterResponse);
     server.closeIdleConnections();
+    const sweep = setInterval(() => server.closeIdleConnections(), 100);
+    sweep.unref();
     const force = setTimeout(() => {
       log(`Shutdown: requests still open after ${timeoutMs} ms, closing them`);
       server.closeAllConnections();
       resolve(false);
     }, timeoutMs);
     force.unref();
-    server.once("close", () => clearTimeout(force));
+    server.once("close", () => {
+      clearTimeout(force);
+      clearInterval(sweep);
+      server.off("request", closeAfterResponse);
+    });
   });
 
   const run = async (reason: string) => {

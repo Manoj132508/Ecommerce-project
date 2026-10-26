@@ -1,7 +1,7 @@
 // Reliability (Phase 7A): pool settings, liveness/readiness and graceful
 // shutdown. Database failures against real PostgreSQL are in
 // test/db/reliability.test.ts; these run with the in-memory MongoDB.
-import { createServer } from "node:http";
+import { Agent, createServer, get } from "node:http";
 import express from "express";
 import mongoose from "mongoose";
 import request from "supertest";
@@ -132,6 +132,29 @@ describe("graceful shutdown", () => {
     expect(await done).toBe(true);
     expect(order).toEqual(["postgres", "mongodb"]);
     expect(server.listening).toBe(false);
+  });
+
+  // Found by CI (run 40341123629, Linux): a keep-alive connection whose request
+  // finished during the drain stayed open until the force timeout, so every
+  // shutdown with a keep-alive client (the Next.js proxy) ended "forced", exit 1.
+  test("a keep-alive connection is closed as soon as its request finishes, not at the timeout", async () => {
+    const { server, url, finish, arrived } = await serverWithSlowRoute();
+    const lifecycle = createShutdown({ server, timeoutMs: 5000, log: () => undefined, closers: [] });
+    const agent = new Agent({ keepAlive: true });
+    const inFlight = new Promise((resolve, reject) => {
+      get(`${url}/slow`, { agent }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.headers.connection));
+      }).on("error", reject);
+    });
+    await waitFor(arrived);
+    const started = Date.now();
+    const done = lifecycle.shutdown("SIGTERM");
+    setTimeout(() => finish(), 200);
+    await inFlight;
+    expect(await done).toBe(true); // drained, not forced
+    expect(Date.now() - started).toBeLessThan(2000);
+    agent.destroy();
   });
 
   test("a request that does not finish in time is closed, then the databases are closed anyway", async () => {
