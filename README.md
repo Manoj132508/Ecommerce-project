@@ -1,8 +1,14 @@
 # Ecommerce Platform
 
-A full-stack commerce platform that demonstrates an incremental production migration: a legacy React/Vite storefront is being replaced by a Next.js App Router application while the Express API moves from MongoDB to PostgreSQL domain by domain.
+[![CI](https://github.com/Manoj132508/Ecommerce-project/actions/workflows/ci.yml/badge.svg?branch=portfolio-week%2Fecommerce-modernization)](https://github.com/Manoj132508/Ecommerce-project/actions/workflows/ci.yml?query=branch%3Aportfolio-week%2Fecommerce-modernization)
+
+A full-stack commerce platform that demonstrates incremental application modernization: a legacy React/Vite storefront is being replaced by a Next.js App Router application while the Express API gains PostgreSQL repositories domain by domain.
 
 The migration is deliberately reversible. MongoDB remains the default data source until each PostgreSQL repository, schema migration, and compatibility contract has passed its tests.
+
+**Status:** this implementation is on the `portfolio-week/ecommerce-modernization` review branch. It is a staged migration with tested rollback paths, not a claim of a completed zero-downtime production cutover.
+
+[Migration case study and reproducible evidence](docs/portfolio-evidence.md)
 
 ## Engineering highlights
 
@@ -79,6 +85,22 @@ npm.cmd run data:dry-run
 After a verified import, domains can be selected individually with `DATA_SOURCE_*` environment variables. See [`ecommerce-backend/db/README.md`](ecommerce-backend/db/README.md) for the exact migration, verification, rollback, and production-safety procedures.
 
 ## Quality checks
+
+### Testing & Reliability
+
+[Verified CI run 39941498302](https://github.com/Manoj132508/Ecommerce-project/actions/runs/39941498302) passed at commit `bb2944f680fe378baf6d84e7d0703036c9ce5fdf` on 23 October 2026:
+
+| Scope | Command | Recorded result |
+| --- | --- | --- |
+| PostgreSQL migrations and repositories | `npm run test:db` | **264 passed**, 8 files |
+| Express API | `npm test` | **212 passed**, 9 todo, 10 files |
+| Next.js web | `npm test` | **186 passed**, 10 files |
+| Type checking, web lint/build and API build | Workflow quality gates | Passed |
+| API and web Docker images | Workflow build-only jobs | Passed; images were not published |
+
+These are revision-specific CI results, rather than a coverage percentage or a production-uptime measurement. The PostgreSQL suite uses a disposable container on a random local port, separate from `.env.postgres` and the development Compose volume. It covers schema constraints, migration ordering and checksums, source-data verification, reconciliation, cookie sessions, API compatibility and transactional checkout failure paths.
+
+See the [actual PostgreSQL CI output](docs/evidence/ci-postgres.txt), [PostgreSQL job](https://github.com/Manoj132508/Ecommerce-project/actions/runs/39941498302/job/120373761873), [Express job](https://github.com/Manoj132508/Ecommerce-project/actions/runs/39941498302/job/120373761690) and [Next.js job](https://github.com/Manoj132508/Ecommerce-project/actions/runs/39941498302/job/120373761374).
 
 ```powershell
 # Next.js
