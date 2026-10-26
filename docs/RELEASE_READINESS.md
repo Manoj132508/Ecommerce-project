@@ -20,7 +20,7 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | Chromium (desktop, tablet, mobile) | CI: 16/16 jobs success in 8 browser runs, 0 flaky (91 passed, 8 skipped per job on `753f00b`/`c1caee0`). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 103 passed, 0 failed, 0 flaky, 8 skipped each | PASS | Low | — |
 | WebKit (desktop, iPhone) | Failed in every run before `753f00b` (hydration bug, fixed `73ddf7c`; sign-out race in a test, fixed `753f00b`); Browsers 40090794620 and 40094305058: 47 passed, 0 failed, 0 flaky, 19 skipped at 1 and 2 workers (two consecutive clean runs on the `753f00b` code). Release candidate, locally: on `d5510cb` 9–10 failures per round (pre-hydration form bug, fixed `fbee7e1`; Playwright screenshot style, harness fix `0e40af7`); then 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 55 passed, 0 failed, 0 flaky, 19 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
 | Firefox (desktop) | Passed in 5 of 7 runs; failed in 39998439611 (1 worker, cause not recorded: annotations did not exist yet) and in 40088693317 (both jobs, the sign-out race, made worse by `96128da`, reverted); 40090794620 and 40094305058: 26 passed, 0 failed, **0 flaky**, 7 skipped at 1 and 2 workers (two consecutive clean runs). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 30 passed, 0 failed, **0 flaky** (no retry used), 7 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
-| Browser run on `9ed46cd` | **40341123856: FAIL**, 6/7 jobs success: Chromium 103/0/0 ×2, Firefox 30/0/0 ×2, WebKit (2 workers) 55/0/0; WebKit (1 worker) — **infrastructure**: `Install webkit OS dependencies` (apt) timed out at the 15-min bound, suite skipped | FAIL (infra) | Medium: apt mirror slowness recurs (3 of 9 Browser runs; 1 since the split) | Count as a failed round; no timeout or retry change without approval (§8) |
+| Browser run on `9ed46cd` | **40341123856: FAIL**, 6/7 jobs success: Chromium 103/0/0 ×2, Firefox 30/0/0 ×2, WebKit (2 workers) 55/0/0; WebKit (1 worker) — **infrastructure**: `Install webkit OS dependencies` (apt) timed out at the 15-min bound, suite skipped | FAIL (infra) | Medium: apt mirror slowness recurs (4 of 10 Browser runs; 2 since the split, both in the last 2 runs) | Count as a failed round; no timeout or retry change without approval (§8) |
 | Browser install bounded and cached | Install 696–2,692 s before `fce094d`; 0–51 s in the 4 runs after (§5) | PASS | Low | — |
 | Security review (code + probes) | §2 | PASS (review done) | — | — |
 | High-severity findings fixed | body-parser `c5056fd` | PASS | — | Production API still runs the vulnerable version until a deploy |
@@ -300,5 +300,20 @@ One local MongoDB run before that failed three test files at setup (`auth`, `aut
 in-memory server start; the error text was not captured) and did not reproduce: the file alone 24/24, the full suite
 again 235/235; CI ran the suite green on `9ed46cd`. Recorded as a local start-up flake.
 
-**Final CI on the fixed commit:** pending — the three fix commits (`ff8ca8b`, `798ff88`, `7b2002a`) and the docs
-are local and need approval to push; then CI and three Browser runs on that one SHA (the push, plus two re-runs).
+**Final CI on the fixed commit `6c03fa5`** (pushed with approval, `9ed46cd..6c03fa5`, no force):
+
+- **CI 40370706527: SUCCESS, 11/11 jobs** — backend MongoDB, backend PostgreSQL (incl. the Linux SIGTERM test and the
+  concurrency tests), Next.js unit, Vite (tests, typecheck, lint, build), typecheck and lint ×2, production builds
+  with the client-bundle check, `npm audit` ×3, proxy and page e2e.
+- **Browser round 1, run 40370706705: FAIL (infrastructure), 6/7 jobs success.** Every suite that ran: 0 failed,
+  0 flaky — Chromium 103 passed / 8 skipped (1 and 2 workers), Firefox 30 / 7 (2 workers), WebKit 55 / 19 (1 and 2
+  workers). Firefox (1 worker): `Install firefox OS dependencies` timed out at 912 s, suite skipped. Chromium
+  (1 worker) needed 417 s for the same step.
+- **Rounds 2 and 3: not run.** A re-run repeats the same `apt` installation, which has now hung in 4 of 10 Browser
+  runs (2 of the last 2). Three consecutive clean rounds on one SHA cannot be shown reliably until that dependency is
+  removed — see "Proposed CI change" below. The application tests themselves have not failed on `6c03fa5`.
+
+**Proposed CI change (not made; needs approval, and would change the SHA under test):** run the browser jobs in
+Playwright's official container image pinned to the same version (`mcr.microsoft.com/playwright:v1.64.0-noble`,
+OS packages and browsers preinstalled), removing both install steps. No timeout, retry or test change. Alternative:
+keep the runner and cache the `.deb` packages — less robust. Then CI plus three Browser rounds on the new SHA.
