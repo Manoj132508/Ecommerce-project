@@ -90,6 +90,22 @@ describe("reconcile CLI", () => {
     expect(await mongoCount("users")).toBe(0);
   }, 60_000);
 
+  test("size guard: refused before loading when a table exceeds --max-records; counts reported; a larger limit runs", async () => {
+    await db.pool.query("INSERT INTO delivery_options (id, delivery_days, price_cents) VALUES ('2', 3, 499)");
+    const guarded = await cli(["apply", "--confirm", "--writes-frozen", "--max-records", "1"]);
+    expect(guarded.code).toBe(1);
+    expect(guarded.report).toMatchObject({
+      outcome: "refused",
+      preflight: { maxRecords: 1, postgres: { users: 1, delivery_options: 2, orders: 0 }, mongodb: { users: 0 } },
+    });
+    expect(String(guarded.report.error)).toMatch(/PostgreSQL delivery_options has 2 records, more than --max-records 1/);
+    expect(await mongoCount("users")).toBe(0);
+
+    const defaulted = await cli(["plan"]);
+    expect(defaulted.report).toMatchObject({ outcome: "succeeded", preflight: { maxRecords: 25_000 } });
+    expect((await cli(["plan", "--max-records", "abc"])).report).toMatchObject({ outcome: "refused" });
+  }, 90_000);
+
   test("apply is refused without --confirm and --writes-frozen", async () => {
     for (const args of [["apply"], ["apply", "--confirm"], ["apply", "--writes-frozen"]]) {
       const refused = await cli(args);

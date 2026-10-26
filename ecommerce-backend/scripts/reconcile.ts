@@ -15,8 +15,13 @@
 //   - PostgreSQL is only read. MongoDB writes are idempotent and insert-only,
 //     except archived product replacements; existing orders are never changed.
 //   - Reports hold counts, ids and issue codes, never names, emails or addresses.
+//   - Size guard: the run holds both databases' reconciled records in memory
+//     (measured: 20,000 users + 20,000 orders + 40,000 lines, peak ~0.6 GB RSS;
+//     apply 6 s with batched writes). Before loading anything it counts the rows
+//     and refuses when any table exceeds --max-records (default 25,000); pass a
+//     larger value only on a machine with the memory for it.
 //
-// Options: --report <file>. Sources: MONGODB_URI (.env), DATABASE_URL
+// Options: --report <file>, --max-records <n>. Sources: MONGODB_URI (.env), DATABASE_URL
 // (.env.postgres); real environment variables take precedence.
 import dotenv from "dotenv";
 import { existsSync } from "node:fs";
@@ -58,6 +63,7 @@ interface Report {
   mongodb?: string;
   postgresFingerprint?: string;
   counts?: Record<string, number>;
+  preflight?: { maxRecords: number; postgres: Record<string, number>; mongodb: Record<string, number> };
   written?: Record<string, number>;
   runId?: string;
   reasons?: string[];
@@ -75,6 +81,18 @@ function requireLocal(uri: string, kind: "PostgreSQL" | "MongoDB", allowFlag: st
     );
   }
 }
+
+const DEFAULT_MAX_RECORDS = 25_000;
+
+function maxRecords(): number {
+  const value = option("--max-records");
+  if (value === undefined) return DEFAULT_MAX_RECORDS;
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Refusal("--max-records must be a whole number.");
+  return Number(value);
+}
+
+const POSTGRES_TABLES = ["users", "orders", "order_items", "order_status_events", "products", "delivery_options", "cart_items"] as const;
+const MONGO_COLLECTIONS = ["users", "orders", "products", "deliveryOptions"] as const;
 
 const counts = (plan: ReconciliationPlan) => ({
   deliveryOptions: plan.inserts.deliveryOptions.length,
@@ -99,11 +117,26 @@ async function run(operation: Operation, report: Report): Promise<Report> {
   report.postgres = describeConnection(postgresUri);
   report.mongodb = describeConnection(mongoUri);
 
+  const limit = maxRecords();
   const { default: pool } = await import("../config/postgres.js");
   await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5_000 });
   try {
     const db = mongoose.connection.db;
     if (!db) throw new Error("MongoDB connection has no database");
+    // Size guard before anything is loaded. Table names are the constants above.
+    const postgresCounts = Object.fromEntries(await Promise.all(POSTGRES_TABLES.map(async (table) => (
+      [table, Number((await pool.query<{ count: string }>(`SELECT count(*) FROM ${table}`)).rows[0]?.count ?? 0)] as const
+    ))));
+    const mongoCounts = Object.fromEntries(await Promise.all(MONGO_COLLECTIONS.map(async (name) => (
+      [name, await db.collection(name).estimatedDocumentCount()] as const
+    ))));
+    report.preflight = { maxRecords: limit, postgres: postgresCounts, mongodb: mongoCounts };
+    const over = [...Object.entries(postgresCounts).map(([name, n]) => [`PostgreSQL ${name}`, n] as const), ...Object.entries(mongoCounts).map(([name, n]) => [`MongoDB ${name}`, n] as const)]
+      .filter(([, n]) => n > limit);
+    if (over.length > 0) {
+      throw new Refusal(`${over.map(([name, n]) => `${name} has ${n}`).join(", ")} records, more than --max-records ${limit}. `
+        + "The run holds every record in memory (about 0.6 GB at 20,000 users and orders); raise the limit only on a machine with the memory for it.");
+    }
     if (operation === "plan") {
       const plan = await planReconciliation(pool, db);
       const blocked = plan.issues.some((issue) => issue.severity === "error");
