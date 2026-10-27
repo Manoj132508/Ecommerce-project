@@ -1,0 +1,218 @@
+GitHub Actions PostgreSQL test evidence
+Retrieved: 2026-10-26
+Run: 39941498302 (2026-10-23)
+Job: 120373761873 - PostgreSQL migrations and repositories
+Revision: bb2944f680fe378baf6d84e7d0703036c9ce5fdf
+Branch: portfolio-week/ecommerce-modernization
+Source: https://github.com/Manoj132508/Ecommerce-project/actions/runs/39941498302/job/120373761873
+Command: npm run test:db
+Evidence type: actual CI job excerpt; this is not a fresh local run.
+ANSI colour escapes removed; original timestamps and test output retained.
+
+2026-10-23T10:47:03.3112641Z ##[group]Run npm run test:db
+2026-10-23T10:47:03.3113321Z npm run test:db
+2026-10-23T10:47:03.3190047Z shell: /usr/bin/bash -e {0}
+2026-10-23T10:47:03.3190609Z ##[endgroup]
+2026-10-23T10:47:03.4742373Z 
+2026-10-23T10:47:03.4743215Z > ecommerce-backend@1.0.0 test:db
+2026-10-23T10:47:03.4744025Z > vitest run --config vitest.db.config.ts
+2026-10-23T10:47:03.4744424Z 
+2026-10-23T10:47:03.8498090Z 
+2026-10-23T10:47:03.8504567Z  RUN  v5.0.5 /home/runner/work/Ecommerce-project/Ecommerce-project/ecommerce-backend
+2026-10-23T10:47:03.8531130Z 
+2026-10-23T10:47:23.3062101Z stderr | test/db/api.postgres.test.ts > checkout (transactional) > a checkout interrupted before commit stores nothing, and the same key then succeeds
+2026-10-23T10:47:23.3066050Z Checkout failed: simulated interruption
+2026-10-23T10:47:23.3068940Z 
+2026-10-23T10:47:23.3828246Z  ✓ test/db/dataMigration.test.ts (30 tests) 12007ms
+2026-10-23T10:47:23.3830179Z    ✓ dry run (extraction and validation) (4)
+2026-10-23T10:47:23.3838393Z      ✓ reports counts, exclusions, ownership, snapshots and deleted products, and writes nothing 457ms
+2026-10-23T10:47:23.3840334Z      ✓ is deterministic: the same source gives the same plan and fingerprint 343ms
+2026-10-23T10:47:23.3842554Z      ✓ reports malformed ids, broken references, duplicates and incompatible values as errors 381ms
+2026-10-23T10:47:23.3843593Z      ✓ reports fields the model does not define (they would not be copied) 387ms
+2026-10-23T10:47:23.3844596Z    ✓ import (5)
+2026-10-23T10:47:23.3846299Z      ✓ copies every record exactly, preserves ids/prices/timestamps, excludes the cart, and verifies clean 502ms
+2026-10-23T10:47:23.3848082Z      ✓ re-running changes nothing 417ms
+2026-10-23T10:47:23.3849765Z      ✓ a re-run picks up source changes to reference data and keeps the source timestamps 439ms
+2026-10-23T10:47:23.3851965Z      ✓ invalid records block the whole import by default; nothing is written 596ms
+2026-10-23T10:47:23.3853409Z      ✓ --skip-invalid imports only valid records, skips dependants, and reports every skip 355ms
+2026-10-23T10:47:23.3854170Z    ✓ failures roll back completely (4)
+2026-10-23T10:47:23.3855032Z      ✓ a failure part-way through (after delivery options and products) leaves PostgreSQL unchanged 345ms
+2026-10-23T10:47:23.3856020Z      ✓ refuses to import into a database whose schema is not fully migrated 489ms
+2026-10-23T10:47:23.3856821Z      ✓ two concurrent imports cannot interleave 420ms
+2026-10-23T10:47:23.3857330Z    ✓ verification (2)
+2026-10-23T10:47:23.3858149Z      ✓ detects content drift, missing rows and unexpected rows (field names only, no values) 388ms
+2026-10-23T10:47:23.3859038Z      ✓ flags a source that changed after the last import 463ms
+2026-10-23T10:47:23.3859600Z    ✓ rollback of imported data (3)
+2026-10-23T10:47:23.3865063Z      ✓ needs --confirm, then removes every imported row and keeps the audit trail; re-import works 500ms
+2026-10-23T10:47:23.3867002Z      ✓ refuses when PostgreSQL holds application data (a cart or a non-legacy order) 368ms
+2026-10-23T10:47:23.3868671Z      ✓ refuses when a row was not created by a recorded import 410ms
+2026-10-23T10:47:23.3870147Z    ✓ MongoDB is never modified (1)
+2026-10-23T10:47:23.3871613Z      ✓ dry-run, import, re-import, verify and rollback leave the source byte-identical 562ms
+2026-10-23T10:47:23.3872831Z    ✓ connection safety guard (10)
+2026-10-23T10:47:23.3874285Z      ✓ isLocalConnection("mongodb://127.0.0.1:27017/ecommerce_store") is true 328ms
+2026-10-23T10:47:23.3875906Z      ✓ isLocalConnection("mongodb://localhost/db") is true 345ms
+2026-10-23T10:47:23.3877946Z      ✓ isLocalConnection("mongodb://[::1]:27017/db") is true 339ms
+2026-10-23T10:47:23.3879950Z      ✓ isLocalConnection("***db.example.com:27017/db") is false 313ms
+2026-10-23T10:47:23.3881984Z      ✓ isLocalConnection("mongodb://127.0.0.1:27017,db2.example.com:27017/db?replicaSet=rs0") is false 316ms
+2026-10-23T10:47:23.3884244Z      ✓ isLocalConnection("***dpg-abc.oregon-postgres.render.com/db") is false 301ms
+2026-10-23T10:47:23.3885481Z      ✓ isLocalConnection("") is false 378ms
+2026-10-23T10:47:23.3886690Z      ✓ connection descriptions never include credentials 300ms
+2026-10-23T10:47:23.3887725Z    ✓ operational collections (1)
+2026-10-23T10:47:23.3889138Z      ✓ authentication rate-limit counters are not extracted and do not change the source fingerprint 399ms
+2026-10-23T10:47:24.2839388Z stderr | test/db/api.postgres.test.ts > checkout (transactional) > a failure part-way through rolls everything back: no order, cart and stock intact
+2026-10-23T10:47:24.2841857Z Checkout failed: simulated failure while writing order lines
+2026-10-23T10:47:24.2842398Z 
+2026-10-23T10:47:25.0115897Z  ✓ test/db/authSessions.test.ts (38 tests) 13488ms
+2026-10-23T10:47:25.0117117Z    ✓ configuration (auth/config.ts) (10)
+2026-10-23T10:47:25.0118168Z      ✓ disabled unless explicitly enabled 358ms
+2026-10-23T10:47:25.0120041Z      ✓ refused in production, and without PostgreSQL users 326ms
+2026-10-23T10:47:25.0121996Z      ✓ secure by default: __Host- cookie, HTTPS origins only 312ms
+2026-10-23T10:47:25.0123788Z      ✓ local development cookie only when Secure is explicitly turned off 331ms
+2026-10-23T10:47:25.0125046Z      ✓ rejects the origin list "" 342ms
+2026-10-23T10:47:25.0125829Z      ✓ rejects the origin list "https://shop.example.test/" 328ms
+2026-10-23T10:47:25.0126667Z      ✓ validates lifetimes 406ms
+2026-10-23T10:47:25.0127180Z    ✓ login and logout (9)
+2026-10-23T10:47:25.0127840Z      ✓ local development cookie: separate name, no Secure attribute 341ms
+2026-10-23T10:47:25.0128760Z      ✓ invalid credentials: 401, the same message for unknown users, no cookie, no session 990ms
+2026-10-23T10:47:25.0129698Z      ✓ login with no Origin is refused (login CSRF) without creating a session 326ms
+2026-10-23T10:47:25.0131338Z      ✓ login with a foreign Origin is refused (login CSRF) without creating a session 335ms
+2026-10-23T10:47:25.0133117Z      ✓ login with the opaque null Origin is refused (login CSRF) without creating a session 327ms
+2026-10-23T10:47:25.0135505Z      ✓ login with a look-alike Origin is refused (login CSRF) without creating a session 309ms
+2026-10-23T10:47:25.0137367Z      ✓ GET /api/auth/session returns the user and the CSRF token; signed out is 401 358ms
+2026-10-23T10:47:25.0139147Z      ✓ logout needs Origin and CSRF; then the session is revoked and the cookie cleared 319ms
+2026-10-23T10:47:25.0139919Z    ✓ expiry, renewal and revocation (4)
+2026-10-23T10:47:25.0141310Z      ✓ idle timeout passed: 401 and the cookie is cleared 316ms
+2026-10-23T10:47:25.0151789Z      ✓ absolute lifetime passed: 401 and the cookie is cleared 312ms
+2026-10-23T10:47:25.0153634Z      ✓ an active session is renewed (sliding idle expiry), at most once per interval 398ms
+2026-10-23T10:47:25.0155219Z      ✓ a revoked session is rejected 334ms
+2026-10-23T10:47:25.0156405Z    ✓ session fixation and tampered tokens (3)
+2026-10-23T10:47:25.0168966Z      ✓ login rotates: a session the browser already presented is revoked, never reused 339ms
+2026-10-23T10:47:25.0171136Z      ✓ an attacker-chosen cookie value is never adopted as a session 342ms
+2026-10-23T10:47:25.0172890Z      ✓ invalid and tampered tokens are rejected without errors 398ms
+2026-10-23T10:47:25.0174302Z    ✓ CSRF and Origin on application routes (2)
+2026-10-23T10:47:25.0175920Z      ✓ cart writes need the session's CSRF token and an allowed Origin; refused requests change nothing 385ms
+2026-10-23T10:47:25.0177853Z      ✓ an admin PATCH without CSRF is refused before the order is touched 379ms
+2026-10-23T10:47:25.0179469Z    ✓ authorisation and ownership are unchanged with cookie sessions (1)
+2026-10-23T10:47:25.0182091Z      ✓ users see only their own cart and orders; admin routes need an admin 397ms
+2026-10-23T10:47:25.0183371Z    ✓ multiple sessions (1)
+2026-10-23T10:47:25.0184956Z      ✓ each device has its own session; logout ends one, logout everywhere ends all of that user's 391ms
+2026-10-23T10:47:25.0186789Z    ✓ legacy bearer-token compatibility (3)
+2026-10-23T10:47:25.0188352Z      ✓ the legacy endpoints and bearer requests behave exactly as without cookie sessions 405ms
+2026-10-23T10:47:25.0190790Z      ✓ a legacy token can be exchanged for a session (Origin-checked); the exchange needs a valid bearer token 356ms
+2026-10-23T10:47:25.0192924Z      ✓ with the feature off, session endpoints do not exist and session cookies are ignored 309ms
+2026-10-23T10:47:25.0194395Z    ✓ database failures and integrity (5)
+2026-10-23T10:47:25.0195695Z      ✓ a failed rotation rolls back: the presented session is not revoked 328ms
+2026-10-23T10:47:25.0197625Z      ✓ when the session store is unreachable: 500, no cookie, and no token in the logs 318ms
+2026-10-23T10:47:25.0199388Z      ✓ the schema guards session integrity (0004) 404ms
+2026-10-23T10:47:25.0202928Z      ✓ cleanup deletes only sessions that finished before the retention period 308ms
+2026-10-23T10:47:27.7492384Z  ✓ test/db/api.postgres.test.ts (41 tests) 16235ms
+2026-10-23T10:47:27.7501626Z    ✓ products and delivery options (5)
+2026-10-23T10:47:27.7503627Z      ✓ GET /api/products lists products by creation time with the API shape 361ms
+2026-10-23T10:47:27.7522156Z      ✓ admin create, update and delete; validation, 401/403/404 and malformed ids 367ms
+2026-10-23T10:47:27.7524106Z      ✓ search keywords: kept when an edit does not send them, replaced or set when it does, validated 325ms
+2026-10-23T10:47:27.7525795Z      ✓ admin product writes are private and never cacheable 327ms
+2026-10-23T10:47:27.7527286Z      ✓ GET /api/delivery-options with and without estimated times 343ms
+2026-10-23T10:47:27.7528404Z    ✓ auth (users in PostgreSQL) (4)
+2026-10-23T10:47:27.7540317Z      ✓ register issues a token for a new ObjectId-style id and stores only a bcrypt hash 1120ms
+2026-10-23T10:47:27.7542308Z      ✓ duplicate, concurrent and invalid registrations 692ms
+2026-10-23T10:47:27.7543699Z      ✓ login, wrong password, unknown user and profile 1084ms
+2026-10-23T10:47:27.7545261Z      ✓ existing MongoDB-era tokens keep working (D2) and bad tokens are rejected 326ms
+2026-10-23T10:47:27.7546470Z    ✓ per-user carts (D1, FD1, D3) (8)
+2026-10-23T10:47:27.7547561Z      ✓ every cart endpoint requires authentication 380ms
+2026-10-23T10:47:27.7548922Z      ✓ add, list, update and delete a line with the API shape 418ms
+2026-10-23T10:47:27.7550597Z      ✓ authenticated cart responses are private and never cacheable 300ms
+2026-10-23T10:47:27.7552507Z      ✓ FD1: quantities must be integers from 1 to 10, including after merging 365ms
+2026-10-23T10:47:27.7553943Z      ✓ users only ever see and change their own cart 352ms
+2026-10-23T10:47:27.7555608Z      ✓ invalid input: operator objects, malformed ids, unknown products and delivery options 362ms
+2026-10-23T10:47:27.7557465Z      ✓ D3: a deleted product stays in the cart as unavailable and is left out of totals 357ms
+2026-10-23T10:47:27.7559464Z      ✓ concurrent adds to one line are never lost, and the limit still holds 401ms
+2026-10-23T10:47:27.7611001Z    ✓ checkout (transactional) (14)
+2026-10-23T10:47:27.7612277Z      ✓ validates customer details and refuses an empty cart 338ms
+2026-10-23T10:47:27.7613910Z      ✓ D3: blocks with 409 while the cart holds a deleted product, keeping the cart 404ms
+2026-10-23T10:47:27.7615932Z      ✓ places the order with snapshots, the same totals, an audit event, and clears only the buyer's cart 386ms
+2026-10-23T10:47:27.7617738Z      ✓ D4: snapshots stay as sold after the product is edited or deleted 340ms
+2026-10-23T10:47:27.7619309Z      ✓ two simultaneous checkouts of one cart create exactly one order 371ms
+2026-10-23T10:47:27.7621195Z      ✓ one idempotency key safely replays simultaneous and later checkout attempts 417ms
+2026-10-23T10:47:27.7622925Z      ✓ a key reused with different details is refused and changes nothing 372ms
+2026-10-23T10:47:27.7624581Z      ✓ details that normalise to the same values replay instead of conflicting 316ms
+2026-10-23T10:47:27.7626269Z      ✓ a late retry returns the original order and leaves a refilled cart alone 386ms
+2026-10-23T10:47:27.7627685Z      ✓ a fresh key places a new intentional order 337ms
+2026-10-23T10:47:27.7629538Z      ✓ a checkout interrupted before commit stores nothing, and the same key then succeeds 330ms
+2026-10-23T10:47:27.7631782Z      ✓ rejects a malformed Idempotency-Key before changing the cart 318ms
+2026-10-23T10:47:27.7633557Z      ✓ stock is enforced only for tracked inventory, and never goes negative under concurrency 314ms
+2026-10-23T10:47:27.7635446Z      ✓ a failure part-way through rolls everything back: no order, cart and stock intact 328ms
+2026-10-23T10:47:27.7636937Z    ✓ order history and ownership (5)
+2026-10-23T10:47:27.7638201Z      ✓ users see their own orders; admins see all, including legacy history 316ms
+2026-10-23T10:47:27.7640012Z      ✓ scope=own limits an admin to their own orders (customer page); the default stays all orders 419ms
+2026-10-23T10:47:27.7662071Z      ✓ legacy orders keep their original shape; expand adds the current product or null 318ms
+2026-10-23T10:47:27.7664068Z      ✓ 404 for other users' orders, unknown ids and ownerless legacy orders; 400 for malformed ids 372ms
+2026-10-23T10:47:27.7665407Z    ✓ order status (admin, audited) (5)
+2026-10-23T10:47:27.7666733Z      ✓ admins move an order along allowed transitions; each change is audited 344ms
+2026-10-23T10:47:27.7668481Z      ✓ cancellation is a status only: the total is preserved and nothing is refunded 313ms
+2026-10-23T10:47:27.7670344Z      ✓ legacy orders: an admin may close them as delivered or cancelled, audited; nothing else 345ms
+2026-10-23T10:47:27.7672359Z      ✓ the audit trail is readable by admins only, oldest first, with who and why 319ms
+2026-10-23T10:47:27.7674147Z      ✓ rejects non-admins, invalid statuses, missing reasons, unknown and malformed ids 349ms
+2026-10-23T10:47:29.3499149Z (node:3361) [MONGOOSE] Warning: mongoose: the `new` option for `findOneAndUpdate()` and `findOneAndReplace()` is deprecated. Use `returnDocument: 'after'` instead.
+2026-10-23T10:47:29.3501776Z (Use `node --trace-warnings ...` to show where the warning was created)
+2026-10-23T10:47:31.1266014Z  ✓ test/db/api.compatibility.test.ts (41 tests) 2675ms
+2026-10-23T10:47:31.1267585Z    ✓ write endpoints produce equal results (3)
+2026-10-23T10:47:31.1268693Z      ✓ register and login 1486ms
+2026-10-23T10:47:35.7101128Z  ✓ test/db/migrator.test.ts (16 tests) 4389ms
+2026-10-23T10:47:35.7102787Z    ✓ fresh database (3)
+2026-10-23T10:47:35.7104366Z      ✓ starts empty, then gets every table, function and a history row 308ms
+2026-10-23T10:47:35.7131393Z    ✓ repeated and concurrent runs (3)
+2026-10-23T10:47:35.7161651Z      ✓ concurrent runners apply each migration exactly once 310ms
+2026-10-23T10:47:35.7181381Z    ✓ safety checks (6)
+2026-10-23T10:47:35.7182685Z      ✓ refuses to continue when an applied migration was edited 323ms
+2026-10-23T10:47:35.7184514Z      ✓ applies later migrations in order and rejects one numbered before an applied migration 311ms
+2026-10-23T10:47:35.7185857Z    ✓ rollback (3)
+2026-10-23T10:47:35.7187269Z      ✓ reverts migrations one at a time, newest first, after which they re-apply cleanly 582ms
+2026-10-23T10:47:41.3783046Z  ✓ test/db/reconciliation.test.ts (10 tests) 15572ms
+2026-10-23T10:47:41.3785157Z    ✓ rollback without reconciliation (2)
+2026-10-23T10:47:41.3793639Z      ✓ hides accepted writes, and the readiness gate refuses the older MongoDB 2185ms
+2026-10-23T10:47:41.3801844Z      ✓ planning is read-only on both databases 1231ms
+2026-10-23T10:47:41.3802977Z    ✓ reverse reconciliation (3)
+2026-10-23T10:47:41.3804661Z      ✓ copies new users, orders, statuses, carts and catalogue edits; the MongoDB app then serves them 2349ms
+2026-10-23T10:47:41.3806663Z      ✓ re-running is a no-op: no duplicate users, orders or archives 1374ms
+2026-10-23T10:47:41.3808549Z      ✓ an interrupted run is not ready, and resuming completes it without duplicates 1293ms
+2026-10-23T10:47:41.3810055Z    ✓ verification failures block the rollback (4)
+2026-10-23T10:47:41.3812533Z      ✓ a differing order is a conflict: nothing is written and the order is never modified 1175ms
+2026-10-23T10:47:41.3814425Z      ✓ an email already used by a different MongoDB user blocks the rollback 1161ms
+2026-10-23T10:47:41.3816303Z      ✓ writes during the run are detected (writes not frozen), and the run must be repeated 2045ms
+2026-10-23T10:47:41.3818146Z      ✓ a completed run goes stale as soon as PostgreSQL accepts another write 1226ms
+2026-10-23T10:47:41.3819320Z    ✓ overlapping runs (1)
+2026-10-23T10:47:41.3820843Z      ✓ a second run is refused while one is in progress; neither duplicates anything 1257ms
+2026-10-23T10:47:42.8677027Z  ✓ test/db/schema.test.ts (76 tests) 19217ms
+2026-10-23T10:47:42.8678258Z    ✓ users (D2: ObjectId strings kept as TEXT) (8)
+2026-10-23T10:47:42.8684675Z      ✓ accepts the existing ObjectId and bcrypt formats 315ms
+2026-10-23T10:47:42.8686231Z      ✓ rejects uppercase hex as a user id 310ms
+2026-10-23T10:47:42.8692645Z      ✓ rejects a UUID as a user id 320ms
+2026-10-23T10:47:42.8701944Z      ✓ rejects 23 characters as a user id 332ms
+2026-10-23T10:47:42.8711497Z      ✓ requires normalised, unique emails 329ms
+2026-10-23T10:47:42.8712205Z      ✓ requires a bcrypt hash and a non-blank name 338ms
+2026-10-23T10:47:42.8712853Z    ✓ carts and cart_items (D1 per-user carts, D3, FD1) (11)
+2026-10-23T10:47:42.8713431Z      ✓ rejects quantity 11 330ms
+2026-10-23T10:47:42.8714484Z      ✓ delivery options must exist and cannot be deleted while in use 316ms
+2026-10-23T10:47:42.8715417Z    ✓ orders (D4 legacy history) (7)
+2026-10-23T10:47:42.8716531Z      ✓ application orders require a user and customer details 307ms
+2026-10-23T10:47:42.8717711Z    ✓ order status and financial history (0002) (17)
+2026-10-23T10:47:42.8718710Z      ✓ terminal states cannot move again 336ms
+2026-10-23T10:47:42.8720138Z      ✓ legacy orders keep no invented status; only an audited change may close them (0003) 342ms
+2026-10-23T10:47:43.5703453Z stderr | test/db/authRateLimit.test.ts > registration for the cookie-session flow (POST /api/auth/accounts) > a server failure is a generic 500 without details
+2026-10-23T10:47:43.5705586Z Account creation failed: relation "users" does not exist
+2026-10-23T10:47:43.5706077Z 
+2026-10-23T10:47:43.5908223Z  ✓ test/db/authRateLimit.test.ts (12 tests) 7255ms
+2026-10-23T10:47:43.5909782Z    ✓ PostgreSQL store (0005) (3)
+2026-10-23T10:47:43.5912073Z      ✓ counts atomically, reports the window, starts a new window after expiry, and clears 336ms
+2026-10-23T10:47:43.5913696Z    ✓ cookie-session login limits (4)
+2026-10-23T10:47:43.5915156Z      ✓ account failures lock the account (no session is created), for known and unknown emails alike 1858ms
+2026-10-23T10:47:43.5916399Z      ✓ legacy and cookie logins share one per-address budget 1087ms
+2026-10-23T10:47:43.5917401Z    ✓ registration for the cookie-session flow (POST /api/auth/accounts) (5)
+2026-10-23T10:47:43.5918929Z      ✓ register → sign in → profile: the account is created without any token or session, then the normal login applies 1006ms
+2026-10-23T10:47:43.5920848Z      ✓ account creation shares the per-address registration budget with the legacy endpoint 1212ms
+2026-10-23T10:47:43.5955337Z 
+2026-10-23T10:47:43.5962281Z  Test Files  8 passed (8)
+2026-10-23T10:47:43.5965526Z       Tests  264 passed (264)
+2026-10-23T10:47:43.5966598Z    Start at  10:47:03
+2026-10-23T10:47:43.5971373Z    Duration  39.74s (tests 96%, import 3%, transform 1%)
+2026-10-23T10:47:43.5985162Z 
