@@ -140,8 +140,45 @@ export function opensslPath() {
   throw new Error("openssl was not found (needed for the HTTPS-equivalent scenario)");
 }
 
-/** A migrated throwaway PostgreSQL database in Docker. Call stop() when done. */
+function migrate(databaseUrl) {
+  execFileSync(process.execPath, ["dist/scripts/dbMigrate.js", "up"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "ignore" });
+}
+
+/**
+ * A fresh database on a disposable PostgreSQL server that is already running (E2E_POSTGRES_SERVER_URL), for
+ * environments without Docker access such as the browser workflow's job container, whose service container
+ * is the server. Created with a random name, migrated, and dropped by stop(); nothing else on the server is touched.
+ */
+async function createThrowawayDatabase(label, serverUrl) {
+  const pg = backendRequire("pg");
+  const name = `e2e_${label.replace(/\W/g, "_")}_${randomBytes(6).toString("hex")}`;
+  const onServer = async (sql) => {
+    const client = new pg.Client({ connectionString: serverUrl });
+    await client.connect();
+    try { await client.query(sql); } finally { await client.end(); }
+  };
+  await onServer(`CREATE DATABASE ${name}`);
+  const url = new URL(serverUrl);
+  url.pathname = `/${name}`;
+  const databaseUrl = url.toString();
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  const drop = () => onServer(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).catch(() => undefined);
+  try {
+    migrate(databaseUrl);
+    return { databaseUrl, pool, stop: async () => { await pool.end(); await drop(); } };
+  } catch (error) {
+    await pool.end();
+    await drop();
+    throw error;
+  }
+}
+
+/**
+ * A migrated throwaway PostgreSQL database in Docker. Call stop() when done.
+ * With E2E_POSTGRES_SERVER_URL set, a database on that server is used instead (createThrowawayDatabase).
+ */
 export async function startThrowawayPostgres(label) {
+  if (process.env.E2E_POSTGRES_SERVER_URL) return createThrowawayDatabase(label, process.env.E2E_POSTGRES_SERVER_URL);
   const pg = backendRequire("pg");
   const password = randomBytes(18).toString("hex");
   const { stdout } = await run("docker", [
@@ -164,7 +201,7 @@ export async function startThrowawayPostgres(label) {
     // The image's init phase restarts the server once; wait for the final instance.
     await new Promise((resolve) => setTimeout(resolve, 1500));
     await pool.query("SELECT 1");
-    execFileSync(process.execPath, ["dist/scripts/dbMigrate.js", "up"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "ignore" });
+    migrate(databaseUrl);
     return { databaseUrl, pool, stop: async () => { await pool.end(); await stopContainer(); } };
   } catch (error) {
     await stopContainer();

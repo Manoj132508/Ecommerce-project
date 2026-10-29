@@ -3,8 +3,8 @@
 # on a 4-core machine at 80–91 % CPU; here every engine gets its own runner, and
 # each runs at 1 and at 2 workers so the two can be compared. Timeouts and the
 # retry policy are those of playwright.config.ts (one retry for Firefox only);
-# nothing here raises them. Throwaway stack only (browser/stack.mjs): its own
-# postgres:17-alpine container, compiled Express and `next start`.
+# nothing here raises them. Throwaway stack only (browser/stack.mjs): a fresh
+# database on this job's postgres:17-alpine service, compiled Express and `next start`.
 name: Browser
 
 on:
@@ -62,6 +62,23 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # Microsoft's official Playwright image for exactly the locked version (apps/web/package-lock.json: 1.64.0),
+    # pinned by digest. It ships the browser builds that version expects (Chromium 1248, Firefox 1555,
+    # WebKit 2370) and their Ubuntu 24.04 libraries, so nothing is downloaded or apt-installed per job (that
+    # step hung at the 15-minute bound in 4 of 10 runs). uid 1001 is the image's unprivileged pwuser and the
+    # runner's own uid, so the checkout stays writable. No Docker socket, no privileged mode, no extra capability.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --user 1001
+    # The disposable database server for browser/stack.mjs, which creates, migrates and drops its own database
+    # on it (E2E_POSTGRES_SERVER_URL) instead of starting a container itself. No published port: reachable only
+    # from this job's network, and removed with the job. The password is a fixed placeholder for that reason.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: e2e, POSTGRES_PASSWORD: e2e, POSTGRES_DB: e2e }
+        options: >-
+          --health-cmd "pg_isready -U e2e -d e2e" --health-interval 2s --health-timeout 5s --health-retries 30
     strategy:
       fail-fast: false
       matrix:
@@ -87,26 +104,14 @@ jobs:
         working-directory: apps/web
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with: { name: builds }
-      # Official Playwright procedure, split in two so the step timings show which part is slow (runs on
-      # c917823 spent 11–45 minutes here, not in the tests). Each step is bounded, so a stuck download
-      # fails fast as an infrastructure problem instead of consuming the job's whole time.
-      - name: Playwright version
-        id: playwright
+      # The image's browsers only fit the Playwright version they were built for: fail here, plainly, if the
+      # lockfile moves on without the image tag (and digest) above.
+      - name: Playwright version matches the image
         working-directory: apps/web
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.engine }}
-      - name: Install ${{ matrix.engine }} browser (cached)
-        working-directory: apps/web
-        timeout-minutes: 15
-        run: npx playwright install ${{ matrix.engine }}
-      - name: Install ${{ matrix.engine }} OS dependencies
-        working-directory: apps/web
-        timeout-minutes: 15
-        run: npx playwright install-deps ${{ matrix.engine }}
-      - run: docker pull postgres:17-alpine
+        run: |
+          installed="$(node -p "require('@playwright/test/package.json').version")"
+          echo "Playwright $installed; browsers in $PLAYWRIGHT_BROWSERS_PATH: $(cd "$PLAYWRIGHT_BROWSERS_PATH" && echo *)"
+          test "$installed" = "1.64.0" || { echo "::error::Playwright $installed does not match the v1.64.0 image"; exit 1; }
       - name: Runner capacity
         run: |
           echo "CPUs: $(nproc)"; free -m; df -h . | tail -1
@@ -114,6 +119,7 @@ jobs:
         working-directory: apps/web
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/report.json
+          E2E_POSTGRES_SERVER_URL: postgres://e2e:e2e@postgres:5432/e2e
         run: |
           mkdir -p test-results
           vmstat -n -t 5 > test-results/vmstat.log &
