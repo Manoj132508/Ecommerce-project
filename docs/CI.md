@@ -14,7 +14,7 @@ reach a real database. Both run on `pull_request`, on pushes to `ci/**` branches
 | Typecheck and lint | backend `tsc`; web `tsc` + ESLint | none |
 | Production builds | backend `tsc` build, `next build`; then a check that no server-only variable name (`BACKEND_ORIGIN`, `PROXY_CLIENT_IP_SECRET`, `DATABASE_URL`, `MONGODB_URI`, `JWT_SECRET`) appears in `.next/static` | none |
 | Dependency audit | `npm audit --audit-level=low` per package (fails on any advisory) | none |
-| Proxy and page e2e | `npm run test:e2e` (52 checks, incl. an HTTPS-equivalent scenario with a throwaway certificate) and `npm run test:pages` (92 checks) against compiled Express + `next start` | its own `postgres:17-alpine` container (`scripts/e2e-support.mjs`) |
+| Proxy and page e2e | `npm run test:e2e` (52 checks, incl. an HTTPS-equivalent scenario with a throwaway certificate) and `npm run test:pages` (92 checks) against compiled Express + `next start` | its own `postgres:17-alpine` container (`scripts/e2e-support.mjs`, started on the runner) |
 
 ## `.github/workflows/browser.yml` — real browsers, isolated
 
@@ -27,18 +27,28 @@ artifact. Then **each engine runs on its own runner**, at **1 and at 2 workers**
 | WebKit | desktop 1366×900, iPhone 14 |
 | Firefox | desktop 1366×900 |
 
-Browsers are installed with the official Playwright procedure in two bounded steps (at most 15 minutes each):
-`npx playwright install <engine>` with the browser cached per engine and Playwright version (`actions/cache`,
-`~/.cache/ms-playwright`), then `npx playwright install-deps <engine>` for the OS packages. They were one step
-(`--with-deps`) until run 40008746470, where installation took 696–2,692 s (WebKit hit the 45-minute job limit) while
-the tests themselves took 1–3 minutes; in the 4 runs since (40084134454 – 40090794620) the browser step took 0–8 s and
-the OS-package step 11–51 s. `actions/cache` saves only when the job succeeds, so an engine whose jobs fail keeps
-downloading (3–5 s for WebKit); the step timings show hits for Chromium and Firefox from the second run on. The
-cache key includes the Playwright version, so an upgrade downloads fresh browsers. The OS-package step still hangs now
-and then on the package mirrors (4 of 10 Browser runs: 2 before the install was split, 2 after — 40341123856 WebKit and 40370706705 Firefox, 1 worker, 912 s each); the bound
-makes that a clear step failure, counted as a failed round. No retry or longer bound has been added. The suite starts its own
-throwaway stack (`browser/stack.mjs`). Timeouts and retries are those of `playwright.config.ts` (90 s per test, one
-retry for Firefox only); the workflow only sets the worker count.
+**Browsers come from the official Playwright image (since `eae9b09`).** Each browser job runs in
+`mcr.microsoft.com/playwright:v1.64.0-noble`, pinned by digest, which ships the exact browser builds of the locked
+Playwright version (1.64.0: Chromium 1248, Firefox 1555, WebKit 2370) and their Ubuntu 24.04 libraries. Nothing is
+downloaded or apt-installed per job; starting the container took 32–43 s. A step fails if the lockfile's Playwright
+version no longer matches the image, so an upgrade must move the image tag and digest with it. The job runs as uid
+1001 (the image's unprivileged `pwuser`, also the runner's uid); no Docker socket is mounted, nothing is privileged.
+
+The suite starts its own throwaway stack (`browser/stack.mjs`): compiled Express, `next start`, and a fresh
+database. In the job container that database is created on a `postgres:17-alpine` **service container** with no
+published port (`E2E_POSTGRES_SERVER_URL`; `scripts/e2e-support.mjs` creates a randomly named database, migrates it
+and drops it afterwards). Locally and in `ci.yml`, without that variable, the helper starts its own PostgreSQL
+container as before. Timeouts and retries are those of `playwright.config.ts` (90 s per test, one retry for Firefox
+only); the workflow only sets the worker count.
+
+History of the install step (kept for the record). Until run 40008746470 browsers were installed with
+`playwright install --with-deps`, which took 696–2,692 s (WebKit hit the 45-minute job limit) while the tests took
+1–3 minutes. From `fce094d` the install was split into two bounded steps (at most 15 minutes each, browser cached
+with `actions/cache`): in the next 4 runs the browser step took 0–8 s and the OS-package step 11–51 s, but the
+OS-package (apt) step still hung on the package mirrors — 4 of 10 Browser runs, 2 before the split and 2 after
+(40341123856 WebKit and 40370706705 Firefox, 1 worker, 912 s each; Chromium 1 worker 417 s in the latter). Each such
+round counted as failed; no retry or longer bound was added. The image replaced both steps. On `eae9b09`, Browser
+40914194558 then passed three consecutive complete rounds (attempts 1–3, 21/21 jobs).
 
 Each browser job records, and summarises in the job summary and as annotations (`scripts/browser-report-summary.mjs`):
 counts per project (passed, failed, flaky, skipped), every failed attempt with its file and line, the slowest attempts
@@ -48,7 +58,10 @@ unfinished at the end of a test, one browser launch time per worker, and runner 
 ## Safety
 
 - `permissions: contents: read` everywhere; checkouts use `persist-credentials: false`; no `secrets.*` is referenced.
-- Third-party actions are the official `actions/*` ones, pinned to commit SHAs (with the version in a comment).
+- Third-party actions are the official `actions/*` ones, pinned to commit SHAs (with the version in a comment). The
+  browser jobs' container image is Microsoft's official Playwright image, pinned by digest.
+- The browser jobs' database service uses a fixed placeholder password (`e2e`): it has no published port, is
+  reachable only from that job's network, holds only throwaway test data and is removed with the job.
 - `MONGODB_URI` and `DATABASE_URL` are set to empty strings at workflow level, and both test setups clear them again.
 - `concurrency` cancels a superseded run on the same branch; every job has a `timeout-minutes`.
 - npm caches (`actions/setup-node` with `cache: npm`) hold downloaded packages only, keyed on the lockfiles.

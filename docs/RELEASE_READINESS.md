@@ -1,4 +1,4 @@
-# Release readiness (Phase 7A, 2026-10-23 – 2026-10-26)
+# Release readiness (Phase 7A, 2026-10-23 – 2026-10-29)
 
 **Verdict: NO-GO for production.** Nothing has been deployed, no production database or setting was touched, and no
 cutover is approved. This report lists what was verified, what was measured, what is still open and the checklist
@@ -13,18 +13,20 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | Requirement | Evidence | Status | Risk | Next action |
 | --- | --- | --- | --- | --- |
 | CI: tests, typecheck, lint, builds, e2e on every PR | CI runs 40090794609 (`753f00b`) and 40094305039 (`c1caee0`, docs only): 11/11 jobs success each | PASS (on `c1caee0`) | Low | Keep required on PRs |
-| CI on the release candidate | Pushed `c1caee0..9ed46cd` (approved). CI **40341123629: FAIL**, 9/11 jobs: PostgreSQL job — the Linux-only SIGTERM test exposed a real shutdown defect (keep-alive connections held until the timeout; fixed `ff8ca8b`) and one rate-limit test with a timing assumption (corrected `798ff88`); Vite job — `cartAuth.test.tsx` 1-s `findByRole` timeout in untouched code (passed locally and in every earlier CI run) | FAIL on `9ed46cd`; fixes local | Medium | Approve pushing `ff8ca8b`, `798ff88`, `7b2002a` and docs; then CI + 3 Browser runs on that SHA (§8) |
+| CI on the release candidate | **CI 40914194659 on `eae9b09`: SUCCESS, 11/11 jobs** (§9); before it CI 40370706527 on `6c03fa5`: 11/11. History kept: CI **40341123629 on `9ed46cd`: FAIL**, 9/11 — PostgreSQL job: the Linux-only SIGTERM test exposed a real shutdown defect (keep-alive connections held until the timeout; fixed `ff8ca8b`) and one rate-limit test with a timing assumption (corrected `798ff88`); Vite job: `cartAuth.test.tsx` 1-s `findByRole` timeout in untouched code (not recurred since) | PASS (on `eae9b09`) | Low | Keep required on PRs |
 | All suites on the release candidate, locally | Backend MongoDB 234 + 9 todo, PostgreSQL 306 + 1 skipped (Linux-only SIGTERM test, verified by hand on Linux), Next.js 240, Vite 47, proxy e2e 52, pages e2e 92, typecheck, lint, builds, `npm audit` 0 ×3 | PASS (local) | Low | Same in CI after the push |
 | Dependency audit, 0 advisories (3 packages) | CI 40084134395 failed on a new advisory (body-parser); fixed `c5056fd`; green since (40086240138, 40088693261, 40090794609) | PASS | Low — new advisories can appear any day | Fix or accept within days when the audit job fails |
 | No server-only variable in client bundles | `build` job check, every CI run | PASS | Low | — |
-| Chromium (desktop, tablet, mobile) | CI: 16/16 jobs success in 8 browser runs, 0 flaky (91 passed, 8 skipped per job on `753f00b`/`c1caee0`). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 103 passed, 0 failed, 0 flaky, 8 skipped each | PASS | Low | — |
-| WebKit (desktop, iPhone) | Failed in every run before `753f00b` (hydration bug, fixed `73ddf7c`; sign-out race in a test, fixed `753f00b`); Browsers 40090794620 and 40094305058: 47 passed, 0 failed, 0 flaky, 19 skipped at 1 and 2 workers (two consecutive clean runs on the `753f00b` code). Release candidate, locally: on `d5510cb` 9–10 failures per round (pre-hydration form bug, fixed `fbee7e1`; Playwright screenshot style, harness fix `0e40af7`); then 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 55 passed, 0 failed, 0 flaky, 19 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
-| Firefox (desktop) | Passed in 5 of 7 runs; failed in 39998439611 (1 worker, cause not recorded: annotations did not exist yet) and in 40088693317 (both jobs, the sign-out race, made worse by `96128da`, reverted); 40090794620 and 40094305058: 26 passed, 0 failed, **0 flaky**, 7 skipped at 1 and 2 workers (two consecutive clean runs). Release candidate, locally: 3 consecutive local rounds on `0e40af7` (each engine alone, 1 worker): 30 passed, 0 failed, **0 flaky** (no retry used), 7 skipped each | PASS (CI ×2 on `753f00b`; local ×3 on the release candidate) | Medium until repeated in CI | 3 consecutive clean CI runs on the release candidate (§7) |
+| Chromium (desktop, tablet, mobile) | Release candidate `eae9b09`, Browser 40914194558 attempts 1–3: 6/6 jobs success (1 and 2 workers); 103 passed, 0 failed, 0 flaky, 8 skipped in every job summary read (§9). Earlier: every Chromium job that ran its suite passed (16/16 in 8 runs before the release candidate, 0 flaky; 40341123856 and 40370706705: 103/0/0/8) | PASS | Low | — |
+| WebKit (desktop, iPhone) | Release candidate `eae9b09`, Browser 40914194558 attempts 1–3: 6/6 jobs success; 55 passed, 0 failed, 0 flaky, 19 skipped in every job summary read (§9). History kept: failed in every run before `753f00b` (hydration bug, fixed `73ddf7c`; sign-out race in a test, fixed `753f00b`); locally on `d5510cb` 9–10 failures per round (pre-hydration form bug, fixed `fbee7e1`; Playwright screenshot style, harness fix `0e40af7`); WebKit 1-worker in 40341123856 did not run its suite (apt timeout, infrastructure) | PASS (CI ×3 on `eae9b09`) | Low | — |
+| Firefox (desktop) | Release candidate `eae9b09`, Browser 40914194558 attempts 1–3: 6/6 jobs success; 30 passed, 0 failed, **0 flaky** (the configured single retry not used), 7 skipped in every job summary read (§9). History kept: failed in 39998439611 (1 worker, cause not recorded) and 40088693317 (the sign-out race, fixed `753f00b`); Firefox 1-worker in 40370706705 did not run its suite (apt timeout, infrastructure) | PASS (CI ×3 on `eae9b09`) | Low | — |
 | Browser run on `9ed46cd` | **40341123856: FAIL**, 6/7 jobs success: Chromium 103/0/0 ×2, Firefox 30/0/0 ×2, WebKit (2 workers) 55/0/0; WebKit (1 worker) — **infrastructure**: `Install webkit OS dependencies` (apt) timed out at the 15-min bound, suite skipped | FAIL (infra) | Medium: apt mirror slowness recurs (4 of 10 Browser runs; 2 since the split, both in the last 2 runs) | Count as a failed round; no timeout or retry change without approval (§8) |
-| Browser install bounded and cached | Install 696–2,692 s before `fce094d`; 0–51 s in the 4 runs after (§5) | PASS | Low | — |
+| Browser run on `6c03fa5` | **40370706705: FAIL**, 6/7 jobs success: every suite that ran 0 failed, 0 flaky; Firefox (1 worker) — **infrastructure**: `Install firefox OS dependencies` timed out at 912 s, suite skipped | FAIL (infra), superseded | — | Fixed by `eae9b09` |
+| **Automated CI and browser stability (3 consecutive complete rounds on one SHA)** | `eae9b09`: CI 40914194659 11/11; Browser 40914194558 attempts 1, 2 and 3 each **7/7 jobs success — 21/21**; 0 failed, 0 flaky, 0 cancelled (§9) | **PASS** | Low | Repeat on the commit actually deployed |
+| Browser infrastructure (install step) | Before: the per-job `playwright install-deps` (apt) step hung at its 15-min bound in 4 of 10 runs (40341123856, 40370706705 and two before the split; §5). `eae9b09`: jobs run in the digest-pinned official image `mcr.microsoft.com/playwright:v1.64.0-noble`, no install step; container start-up 32–43 s per job (attempts 1–2) | PASS | Low — depends on the image registry (mcr.microsoft.com) | Move the image tag and digest with every Playwright upgrade (the workflow fails if they differ) |
 | Security review (code + probes) | §2 | PASS (review done) | — | — |
 | High-severity findings fixed | body-parser `c5056fd` | PASS | — | Production API still runs the vulnerable version until a deploy |
-| Medium findings fixed or accepted | All 5 fixed with regression tests (§2): `99db7ab`, `b63bdd7`, `2952952`, `d8d99c0`, `4549772` | PASS (local; CI pending) | Low | Review; CI on the push |
+| Medium findings fixed or accepted | All 5 fixed with regression tests (§2): `99db7ab`, `b63bdd7`, `2952952`, `d8d99c0`, `4549772`; the shutdown fix completed by `ff8ca8b` | PASS (CI 40370706527, 40914194659) | Low | — |
 | Pre-hydration form input (found by the release-candidate runs) | Fixed `fbee7e1`, browser regression test | PASS (local) | Low | — |
 | Checkout idempotency under concurrency | 10 × 3 simultaneous checkouts → exactly 10 orders; key reuse → 422 (§2) | PASS | Low | — |
 | Automated accessibility (axe, keyboard, zoom, reflow, forced colours) | Browser runs (§3) | PASS | Low | — |
@@ -134,6 +136,11 @@ Each engine runs on its own runner at 1 and at 2 workers. Every Browser run on `
 | 40088693317 | `96128da` | success · success | **failure** · **failure** | **failure** · **failure** | Account flow only: Firefox "JSHandle@object" console error (1w) and `NS_BINDING_ABORTED` (2w), both attempts; WebKit "Load failed" (1w), "interrupted by another navigation" (2w) |
 | **40090794620** | **`753f00b`** | 91/0/0/8 · 91/0/0/8 | 26/0/0/7 · 26/0/0/7 | 47/0/0/19 · 47/0/0/19 | **None.** 7/7 jobs success, 0 flaky, 0 cancelled |
 | 40094305058 | `c1caee0` (docs only; same app code) | 91/0/0/8 · 91/0/0/8 | 26/0/0/7 · 26/0/0/7 | 47/0/0/19 · 47/0/0/19 | **None.** 7/7 jobs success, 0 flaky — second consecutive clean run |
+| 40341123856 | `9ed46cd` | 103/0/0/8 · 103/0/0/8 | 30/0/0/7 · 30/0/0/7 | **failure** (apt 912 s, suite not run) · 55/0/0/19 | **Infrastructure only:** `Install webkit OS dependencies` timed out at the 15-min bound |
+| 40370706705 | `6c03fa5` | 103/0/0/8 · 103/0/0/8 | **failure** (apt 912 s, suite not run) · 30/0/0/7 | 55/0/0/19 · 55/0/0/19 | **Infrastructure only:** `Install firefox OS dependencies` timed out (Chromium 1w's same step: 417 s) |
+| **40914194558 attempt 1** | **`eae9b09`** (Playwright image) | 103/0/0/8 · 103/0/0/8 | 30/0/0/7 · 30/0/0/7 | 55/0/0/19 · 55/0/0/19 | **None.** 7/7 jobs success |
+| **40914194558 attempt 2** | **`eae9b09`** | success (summary not read: API rate limit) · 103/0/0/8 | 30/0/0/7 · 30/0/0/7 | 55/0/0/19 · 55/0/0/19 | **None.** 7/7 jobs success |
+| **40914194558 attempt 3** | **`eae9b09`** | success · success | success · success | success · success | **None.** 7/7 jobs success (confirmed by the owner from the run page; per-project counts not read here: API rate limit) |
 
 What the evidence shows:
 
@@ -169,9 +176,13 @@ What the evidence shows:
   WebKit screenshot style refused by the CSP (`0e40af7`). (A script error ran every project in the "Firefox" runs of
   those rounds; Firefox itself passed in them.) On `0e40af7`: **9/9 runs clean** — Chromium 103 passed, Firefox 30,
   WebKit 55, 0 failed, 0 flaky in every round. Reports and traces kept in the session scratch folder.
-- **One clean run is not stability.** The account-flow race appeared in 4 of the 5 earlier runs that have annotations and the fix has
-  run once. The local Firefox stalls (no navigation after an action under heavy parallel load) did **not** reproduce
-  on CI. Both stay documented risks until the go/no-go criterion in §7 (3 consecutive clean runs) is met.
+- **One clean run is not stability** — so the criterion in §7 was three consecutive complete rounds on one SHA. It
+  was met on `eae9b09` (40914194558, attempts 1–3: 21/21 jobs, 0 flaky; §9). The account-flow race (4 of the 5
+  earlier annotated runs before `753f00b`) has not recurred in any CI run since that fix. The local Firefox stalls
+  (no navigation after an action under heavy parallel load, 4-core PC) never reproduced on CI; they remain a note
+  for heavily loaded machines.
+- **Infrastructure failures stay in the table above, not hidden.** The per-job apt step hung in 4 of 10 runs before
+  `eae9b09`; each such round counted as failed. Since `eae9b09` there is no install step.
 
 ## 6. Production plan (documentation only — nothing below has been done)
 
@@ -196,7 +207,8 @@ idempotency keys MongoDB cannot represent fully; the documented no-rollback cond
 Built in 7A and tested on disposable databases only: the write freeze (`WRITE_FREEZE=true`: 503 for writes to shop
 data, reads and sign-in/out keep working) and the CLI `reconcile:plan` / `reconcile:apply --confirm --writes-frozen`
 / `reconcile:verify` (local databases only unless `--allow-remote-postgres` / `--allow-remote-mongodb`; reports
-without personal data). **Not done:** batching for production volumes, a rehearsal on restored copies, approval.
+without personal data). Batched writes and a pre-flight size guard added in `7b2002a` (§8). **Not done:** a
+rehearsal on restored copies, streaming above 25,000 records per table (only if real volumes need it), approval.
 
 **Render (API):** build `npm ci && npm run build` (TypeScript → `dist`, migrations copied); start `node dist/server.js`;
 `NODE_ENV=production`, `JWT_SECRET`, `MONGODB_URI`, `CLIENT_URL`, `TRUST_PROXY_HOPS`, `PROXY_CLIENT_IP_SECRET`; for
@@ -236,16 +248,17 @@ session expiry, sign out everywhere, the screen-reader checklist.
 - [ ] Owner approval for the specific step, recorded with date.
 - [ ] Production MongoDB provider identified; restore-tested `mongodump` taken within 24 h.
 - [ ] Render Postgres provisioned (region, v17, backups/PITR); restore of its backup rehearsed.
-- [ ] All CI jobs green on the release commit, **and** the browser workflow green on at least 3 consecutive runs
-      with no failed attempt outside Firefox's single retry; any stall explained.
+- [x] All CI jobs green on the release commit, **and** the browser workflow green on at least 3 consecutive runs
+      with no failed attempt outside Firefox's single retry; any stall explained — `eae9b09`: CI 40914194659 11/11,
+      Browser 40914194558 attempts 1–3, 21/21 jobs, 0 flaky (§9). Repeat on the commit actually deployed.
 - [x] Medium findings in §2 fixed (rate-limit race, error leaks, stack traces, CSP, pool timeouts, graceful
-      shutdown, health check) — local commits; reviewed, pushed and green in CI still pending.
+      shutdown, health check) — pushed and green in CI (40370706527, 40914194659).
 - [ ] Manual screen-reader pass completed with no ✗ in checkout, sign-in, dialogs or error rows.
 - [ ] Staging pass (§6) completed on sanitised data.
 - [ ] The production guard on cookie sessions (`auth/config.ts`) lifted by an approved, tested change; the legacy
       bearer-token conditions (plan §4) met.
 - [ ] `NODE_ENV=production` and every variable in §6 set and verified on Render and Vercel; no secret in the repo.
-- [ ] Write-freeze window, reconciliation CLI (built in 7A; batching still to do) rehearsed against restored copies,
+- [ ] Write-freeze window, reconciliation CLI (built and batched in 7A) rehearsed against restored copies,
       rollback owner on call.
 - [ ] Monitoring: health check (`/readyz` exists since 7A; the host must be pointed at it), error logs and alerting in
       place before traffic moves.
@@ -309,11 +322,55 @@ again 235/235; CI ran the suite green on `9ed46cd`. Recorded as a local start-up
   0 flaky — Chromium 103 passed / 8 skipped (1 and 2 workers), Firefox 30 / 7 (2 workers), WebKit 55 / 19 (1 and 2
   workers). Firefox (1 worker): `Install firefox OS dependencies` timed out at 912 s, suite skipped. Chromium
   (1 worker) needed 417 s for the same step.
-- **Rounds 2 and 3: not run.** A re-run repeats the same `apt` installation, which has now hung in 4 of 10 Browser
-  runs (2 of the last 2). Three consecutive clean rounds on one SHA cannot be shown reliably until that dependency is
-  removed — see "Proposed CI change" below. The application tests themselves have not failed on `6c03fa5`.
+- **Rounds 2 and 3 on `6c03fa5`: not run.** A re-run would have repeated the same `apt` installation, which had hung
+  in 4 of 10 Browser runs (2 of the last 2). The application tests themselves did not fail on `6c03fa5`.
 
-**Proposed CI change (not made; needs approval, and would change the SHA under test):** run the browser jobs in
-Playwright's official container image pinned to the same version (`mcr.microsoft.com/playwright:v1.64.0-noble`,
-OS packages and browsers preinstalled), removing both install steps. No timeout, retry or test change. Alternative:
-keep the runner and cache the `.deb` packages — less robust. Then CI plus three Browser rounds on the new SHA.
+**Proposed CI change:** made in `eae9b09` — see §9.
+
+## 9. Phase 7A fourth pass — browser infrastructure and final verification (2026-10-29)
+
+**Change `eae9b09`** (committed on its own; secrets scan of the pushed range found only the fixed `e2e` placeholder
+password of the job-private database service). The browser jobs run in the official image
+`mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f`.
+
+| Check | Result |
+| --- | --- |
+| Version | Lockfile `@playwright/test`, `playwright`, `playwright-core` 1.64.0. The image's browsers — Chromium 1248, headless shell 1248, Firefox 1555, WebKit 2370, ffmpeg 1013 — are the revisions `playwright-core/browsers.json` 1.64.0 expects. Image: Ubuntu 24.04.5, Node 24.21.0, `vmstat`/`free`/`nproc` present |
+| Privileges | Job runs as uid 1001 (the image's unprivileged `pwuser`, also the runner's uid, so the checkout stays writable). No Docker socket mount, no `--privileged`, no added capability |
+| Database | The harness started its throwaway PostgreSQL with `docker run`, impossible in a job container without the socket. Now a `postgres:17-alpine` **service container** with no published port (reachable only on the job's network, removed with the job). `scripts/e2e-support.mjs` uses it only when `E2E_POSTGRES_SERVER_URL` is set: it creates a randomly named database, migrates it and drops it on stop. Without the variable (local runs, `ci.yml` e2e) behaviour is unchanged |
+| Removed | Browser cache, `playwright install`, `playwright install-deps` (apt), `docker pull` — after the replacement was verified. Added: a step that fails if the lockfile's Playwright version stops matching the image |
+| Unchanged | Every test assertion; `playwright.config.ts` (90 s per test, one retry for Firefox only); worker counts 1 and 2 |
+| Local verification before the push | actionlint 1.7.7 clean. The six jobs in the same image as uid 1001 on an internal Docker network (no internet): Chromium 103/0/0/8, Firefox 30/0/0/7, WebKit 55/0/0/19 at 1 and 2 workers (passed/failed/flaky/skipped). Both database paths each gave a database with 6 migrations; the server path left 0 databases behind |
+
+**Push:** `6c03fa5..eae9b09` to `ci/phase7a-verification` only (fast-forward, no force; it also carried docs commit
+`8509013`). `main` (`513a381`), `migration/postgres` (`49806d5`), `phase5/nextjs-foundation` (`80c8ff4`) and the
+backup branches unchanged.
+
+**Results on `eae9b09`** (counts passed/failed/flaky/skipped):
+
+| Run | Result | Detail |
+| --- | --- | --- |
+| CI 40914194659 | **SUCCESS, 11/11 jobs** | Next.js unit; Vite (tests, typecheck, lint, build); production builds with the client-bundle check; audit ×3; backend PostgreSQL (incl. the Linux SIGTERM test); proxy and page e2e (on the helper's unchanged Docker path); typecheck and lint ×2; backend MongoDB |
+| Browser 40914194558 attempt 1 | **SUCCESS, 7/7** | Chromium 103/0/0/8 (1w, 2w); Firefox 30/0/0/7 (1w, 2w); WebKit 55/0/0/19 (1w, 2w). Container start-up 33–41 s; suites 50–248 s; jobs 1.9–5.3 min; CPU busy mean 45–89 % |
+| Browser 40914194558 attempt 2 | **SUCCESS, 7/7** | Firefox 30/0/0/7 (1w, 2w); WebKit 55/0/0/19 (1w, 2w); Chromium 2w 103/0/0/8; Chromium 1w job success (summary not read: unauthenticated API limit). Container start-up 32–43 s; jobs 2.1–5.4 min |
+| Browser 40914194558 attempt 3 | **SUCCESS, 7/7** | Confirmed by the owner from the run page; per-project counts not read here (API limit) |
+| **Total** | **21/21 browser jobs — 3 consecutive complete rounds on one SHA** | 0 failed, 0 flaky, 0 cancelled in every summary read; no infrastructure failure |
+
+Earlier infrastructure failures (kept, §5): 40341123856 (`9ed46cd`) and 40370706705 (`6c03fa5`) each lost one job on
+the apt step (912 s); every suite that ran in them passed with 0 failed, 0 flaky. Install timings across Browser
+runs: 696–2,692 s with `--with-deps` (before `fce094d`); after the split, OS packages 11–51 s and browser 0–8 s in 4
+runs, then 417–912 s in the last two; since `eae9b09`, container start-up 32–43 s and no install. Logs and artifacts
+stay on GitHub for their retention (metrics 14 days, failure artifacts 7 days); no failure artifact was produced on
+`eae9b09`.
+
+**Phase 7A automated verification: PASS** (CI, three browser rounds, security tests, audits).
+**Production: NO-GO.** Still open; none started:
+
+| Item | Status |
+| --- | --- |
+| Manual screen-reader pass (NVDA + Firefox, VoiceOver + Safari; `docs/SCREEN_READER_TEST_GUIDE.md`) | PENDING MANUAL |
+| Production MongoDB provider and real record counts (compare with the 25,000 guard) | PENDING (owner: Render dashboard) |
+| R31 rollback rehearsal on restored copies (`docs/CUTOVER_RUNBOOK.md`) | PENDING (Phase 7B) |
+| Production dependency hotfix for `main` (Hotfix A prepared locally, `bd8cb6a`; Hotfix B not prepared) | Needs its own approval (`docs/HOTFIX_MAIN_DEPENDENCIES.md`) |
+| `NODE_ENV=production` and the `/readyz` health check on Render | PENDING (owner) |
+| Phase 7B staging | NOT STARTED — needs explicit approval |
