@@ -1,0 +1,23 @@
+# Build context for apps/web/Dockerfile: sources and the lockfile only.
+# Dependencies and build output are produced inside the image.
+node_modules
+.next
+out
+# Local settings and anything that could hold a secret.
+.env
+.env.*
+*.pem
+*.key
+# Test output, reports and caches.
+test-results
+playwright-report
+blob-report
+coverage
+*.tsbuildinfo
+# Tooling that is not part of the server.
+.git
+.vscode
+.idea
+Dockerfile
+.dockerignore
+*.log

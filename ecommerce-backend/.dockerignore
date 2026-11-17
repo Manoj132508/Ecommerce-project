@@ -1,0 +1,26 @@
+# Build context for ecommerce-backend/Dockerfile: sources, SQL migrations and
+# the lockfile only. Dependencies and dist/ are produced inside the image.
+node_modules
+dist
+# Local settings and anything that could hold a secret (.env, .env.postgres, ...).
+.env
+.env.*
+*.pem
+*.key
+# Data exports, backups and reports from operator commands.
+migration-reports
+backups
+*.archive
+*.gz
+*.dump
+# Tests are not part of the image (they run in CI against the source).
+test
+coverage
+# Tooling.
+.git
+.vscode
+.idea
+Dockerfile
+.dockerignore
+compose.yaml
+*.log

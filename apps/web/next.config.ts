@@ -4,6 +4,10 @@ import type { NextConfig } from "next";
 // the route handler in src/app/api/[...path]/route.ts (not by rewrites), so the
 // forwarded headers and cookies are explicitly controlled.
 const nextConfig: NextConfig = {
+  // The container image (apps/web/Dockerfile) sets NEXT_STANDALONE=true for a
+  // self-contained server with only the runtime files it traces. Everywhere
+  // else (`next start` in CI and e2e, Vercel) the build output is unchanged.
+  ...(process.env.NEXT_STANDALONE === "true" ? { output: "standalone" as const } : {}),
   reactStrictMode: true,
   poweredByHeader: false,
   images: {
