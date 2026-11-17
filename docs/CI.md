@@ -55,6 +55,17 @@ counts per project (passed, failed, flaky, skipped), every failed attempt with i
 with their slowest API request and document response (`timings` fixture in `browser/support.ts`), /api requests left
 unfinished at the end of a test, one browser launch time per worker, and runner load from `vmstat` every 5 s.
 
+## `.github/workflows/container.yml` — production images (Phase 7B)
+
+Builds `ecommerce-api` and `ecommerce-web` from their Dockerfiles, tagged with the commit SHA; saves each image and
+scans the archive with Trivy 0.76.2 (a container pinned by digest — no third-party action, no Docker socket):
+CycloneDX SBOM, full report, and a **gate on any secret or any CRITICAL/HIGH vulnerability with a fixed version**.
+Then starts `docker/compose.yaml` with throwaway secrets, seeds the test catalogue and runs
+`docker/test/container-integration.mjs --restart` (59 checks). Evidence (digests, SBOMs, reports, Compose logs) is
+uploaded for 30 days. No registry push, no AWS access, no repository secret. Runs on pull requests and pushes to
+`ci/**` and `phase7b/**`. Expected to fail its gate until mongoose is updated (two HIGH, fixed in 9.11.4). Design of
+the later deployment pipeline: `docs/AWS_CICD_PLAN.md`.
+
 ## Safety
 
 - `permissions: contents: read` everywhere; checkouts use `persist-credentials: false`; no `secrets.*` is referenced.

@@ -15,7 +15,7 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | CI: tests, typecheck, lint, builds, e2e on every PR | CI runs 40090794609 (`753f00b`) and 40094305039 (`c1caee0`, docs only): 11/11 jobs success each | PASS (on `c1caee0`) | Low | Keep required on PRs |
 | CI on the release candidate | **CI 40914194659 on `eae9b09`: SUCCESS, 11/11 jobs** (§9); before it CI 40370706527 on `6c03fa5`: 11/11. History kept: CI **40341123629 on `9ed46cd`: FAIL**, 9/11 — PostgreSQL job: the Linux-only SIGTERM test exposed a real shutdown defect (keep-alive connections held until the timeout; fixed `ff8ca8b`) and one rate-limit test with a timing assumption (corrected `798ff88`); Vite job: `cartAuth.test.tsx` 1-s `findByRole` timeout in untouched code (not recurred since) | PASS (on `eae9b09`) | Low | Keep required on PRs |
 | All suites on the release candidate, locally | Backend MongoDB 234 + 9 todo, PostgreSQL 306 + 1 skipped (Linux-only SIGTERM test, verified by hand on Linux), Next.js 240, Vite 47, proxy e2e 52, pages e2e 92, typecheck, lint, builds, `npm audit` 0 ×3 | PASS (local) | Low | Same in CI after the push |
-| Dependency audit, 0 advisories (3 packages) | CI 40084134395 failed on a new advisory (body-parser); fixed `c5056fd`; green since (40086240138, 40088693261, 40090794609) | PASS | Low — new advisories can appear any day | Fix or accept within days when the audit job fails |
+| Dependency audit, 0 advisories (3 packages) | 0 on 2026-10-26 (CI 40914194659). **2026-11-17: new advisories** — mongoose 9.9.5 high (GHSA-gg4r-jv3p-qx3c, GHSA-8332-j7wj-wjw4; also in the live `main` API), next 16.4.2 moderate (GHSA-mfr8-8qww-v76h; feature unused), follow-redirects 1.16.1 high in the Vite app; fixes 9.11.4 / 16.4.5 / 1.16.2 not yet approved (`docs/PHASE7B_REPORT.md`) | **FAIL** (new advisories) | High (mongoose, also production) | Approve the updates; separately update the backend production hotfix |
 | No server-only variable in client bundles | `build` job check, every CI run | PASS | Low | — |
 | Chromium (desktop, tablet, mobile) | Release candidate `eae9b09`, Browser 40914194558 attempts 1–3: 6/6 jobs success (1 and 2 workers); 103 passed, 0 failed, 0 flaky, 8 skipped in every job summary read (§9). Earlier: every Chromium job that ran its suite passed (16/16 in 8 runs before the release candidate, 0 flaky; 40341123856 and 40370706705: 103/0/0/8) | PASS | Low | — |
 | WebKit (desktop, iPhone) | Release candidate `eae9b09`, Browser 40914194558 attempts 1–3: 6/6 jobs success; 55 passed, 0 failed, 0 flaky, 19 skipped in every job summary read (§9). History kept: failed in every run before `753f00b` (hydration bug, fixed `73ddf7c`; sign-out race in a test, fixed `753f00b`); locally on `d5510cb` 9–10 failures per round (pre-hydration form bug, fixed `fbee7e1`; Playwright screenshot style, harness fix `0e40af7`); WebKit 1-worker in 40341123856 did not run its suite (apt timeout, infrastructure) | PASS (CI ×3 on `eae9b09`) | Low | — |
@@ -40,7 +40,9 @@ MANUAL (needs a person), NOT RUN (not attempted in 7A).
 | Production MongoDB provider and restore-tested backup | Unknown: no tracked metadata; the local `.env` points at a local MongoDB (§6) | BLOCKED | Blocker for any data step | Owner reads the `MONGODB_URI` host in the Render dashboard |
 | R31 rollback after writes resume | Write freeze `94e08b9`, CLI `d5510cb`, batched writes and a pre-flight size guard `7b2002a` (apply at 20,000 users/orders: 27 s → 6 s; guard 25,000 per table, ~0.6 GB measured at 20,000); runbook `docs/CUTOVER_RUNBOOK.md`; all on disposable databases | BLOCKED (for production) | High | Rehearsal on restored copies in 7B; streaming for > 25,000 records if real volumes need it |
 | Live `main` dependencies | `main` has runtime advisories: backend proxy-addr critical, body-parser/express/path-to-regexp high, qs moderate; Vite app form-data critical, axios/react-router/turbo-stream high. Hotfix A (backend) prepared on local branch `hotfix/backend-express-4.22.3` (`bd8cb6a`): runtime audit 0, `node --test` 24/24, 35 requests identical before/after | BLOCKED (approval) | **High in production today** | Approve review → push → merge → deploy separately (`docs/HOTFIX_MAIN_DEPENDENCIES.md`); Hotfix B (Vite) to prepare |
-| Staging rehearsal | `docs/PHASE7B_STAGING_PLAN.md` (proposal) | NOT RUN | — | Needs approval |
+| Container images and local stack (Phase 7B) | Distroless images, Compose stack, 59/59 container checks twice, scans and SBOMs (`docs/DOCKER_SETUP.md`, `docs/PHASE7B_REPORT.md`); local branch `phase7b/docker-aws-foundation` | PASS (local) | Low | Push for CI after the dependency updates |
+| AWS design, costs, CI/CD | `docs/AWS_ARCHITECTURE.md`, `docs/AWS_COST_ESTIMATE.md` (staging $76.47, production $304.74 a month, London), `docs/AWS_CICD_PLAN.md`; nothing created | READY FOR REVIEW | — | Owner review; 7C code changes (§12 of the architecture) |
+| Staging rehearsal | `docs/PHASE7B_STAGING_PLAN.md` (now Phase 7C, on AWS) | NOT RUN | — | Needs approval |
 | Deployment, production DB change | None made | NOT RUN (by design) | — | — |
 
 ## 1. Risks that exist in production today (not introduced by this migration)
@@ -373,4 +375,12 @@ stay on GitHub for their retention (metrics 14 days, failure artifacts 7 days); 
 | R31 rollback rehearsal on restored copies (`docs/CUTOVER_RUNBOOK.md`) | PENDING (Phase 7B) |
 | Production dependency hotfix for `main` (Hotfix A prepared locally, `bd8cb6a`; Hotfix B not prepared) | Needs its own approval (`docs/HOTFIX_MAIN_DEPENDENCIES.md`) |
 | `NODE_ENV=production` and the `/readyz` health check on Render | PENDING (owner) |
-| Phase 7B staging | NOT STARTED — needs explicit approval |
+| Phase 7B staging | Renamed: Phase 7B is now the Docker/AWS foundation (local, see below); the staging rehearsal is Phase 7C — NOT STARTED |
+
+## 10. Phase 7B — Docker and AWS foundation (2026-11-17)
+
+Local branch `phase7b/docker-aws-foundation` (from `737e4f9`, application code = `eae9b09`); nothing pushed, merged
+or deployed; no AWS resource created. Images, Compose stack and container tests: `docs/DOCKER_SETUP.md`. AWS design,
+costs and pipeline: `docs/AWS_ARCHITECTURE.md`, `docs/AWS_COST_ESTIMATE.md`, `docs/AWS_CICD_PLAN.md`. Full report,
+findings and the Phase 7C list: `docs/PHASE7B_REPORT.md`. **Verdict unchanged: NO-GO for production.** New blocker:
+the dependency advisories in §0 (the CI audit job fails until they are fixed).

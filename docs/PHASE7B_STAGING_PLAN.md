@@ -1,5 +1,11 @@
 # Phase 7B — staging rehearsal plan (proposal, not started)
 
+> **Superseded in scope (2026-11-17).** The owner redefined Phase 7B as the Docker and AWS foundation
+> (`docs/PHASE7B_REPORT.md`). The staging rehearsal described here moves to **Phase 7C** and targets **AWS** (ECS
+> Fargate, RDS for PostgreSQL, ALB — `docs/AWS_ARCHITECTURE.md`) instead of Render Postgres and Vercel. Its steps,
+> data rules (sanitised or test data only) and exit criteria still apply; where it names a Render or Vercel setting,
+> read the AWS equivalent in `docs/AWS_ARCHITECTURE.md` and `docs/AWS_CICD_PLAN.md`.
+
 **Status: not approved, nothing created.** Each step below needs the owner's explicit approval before it is run. No
 production service, database, domain or setting is touched at any point; staging uses separate services and
 disposable or sanitised data only.
