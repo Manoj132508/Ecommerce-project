@@ -1,0 +1,82 @@
+# Container verification (Phase 7B): builds the two production images, scans
+# them, records SBOMs, and runs the local Compose stack with the container
+# integration test (docs/DOCKER_SETUP.md, docs/AWS_CICD_PLAN.md).
+# Verification only: no registry push, no AWS access, no repository secret, no
+# deployment. Images are tagged with the commit SHA and never leave the runner.
+name: Container
+
+on:
+  pull_request:
+  push:
+    branches: ["ci/**", "phase7b/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Trivy as a container image pinned by digest (no third-party action). It
+  # scans saved image archives, so it never needs the Docker socket.
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+
+jobs:
+  images:
+    name: Build, scan and run the containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: "24" }
+
+      - name: Build the API image
+        run: docker build -t "ecommerce-api:${GITHUB_SHA}" -t ecommerce-api:local ecommerce-backend
+      - name: Build the storefront image
+        run: docker build -t "ecommerce-web:${GITHUB_SHA}" -t ecommerce-web:local apps/web
+      - name: Record image digests and sizes
+        run: |
+          mkdir -p evidence
+          for image in ecommerce-api ecommerce-web; do
+            docker image inspect "$image:${GITHUB_SHA}" --format '{{.Id}} {{.Size}}' | tee "evidence/$image.id"
+          done
+
+      - name: Scan images (vulnerabilities, secrets, misconfiguration) and write SBOMs
+        run: |
+          set -euo pipefail
+          status=0
+          for image in ecommerce-api ecommerce-web; do
+            docker save "$image:${GITHUB_SHA}" -o "evidence/$image.tar"
+            run_trivy() { docker run --rm -v "$PWD/evidence:/scan" "$TRIVY_IMAGE" image --quiet --input "/scan/$image.tar" "$@"; }
+            run_trivy --format cyclonedx --output "/scan/$image.sbom.cdx.json"
+            run_trivy --scanners vuln,secret,misconfig --format table --output "/scan/$image.trivy.txt"
+            # Gate: any secret, or a CRITICAL/HIGH vulnerability that has a fixed version.
+            run_trivy --scanners vuln,secret --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format table || status=1
+            rm "evidence/$image.tar"
+          done
+          exit "$status"
+
+      - name: Start the Compose stack (disposable PostgreSQL, throwaway secrets)
+        run: |
+          node docker/create-env.mjs
+          docker volume create ecommerce-local-pgdata
+          docker compose -f docker/compose.yaml up -d --wait
+          docker compose -f docker/compose.yaml --profile seed run --rm seed
+
+      - name: Container integration test (incl. graceful stop and restarts)
+        run: node docker/test/container-integration.mjs --restart
+
+      - name: Container logs
+        if: always()
+        run: docker compose -f docker/compose.yaml logs --no-color > evidence/compose.log 2>&1 || true
+
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: container-evidence
+          retention-days: 30
+          path: evidence
