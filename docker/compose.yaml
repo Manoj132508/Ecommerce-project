@@ -1,0 +1,187 @@
+# Local production-style stack (docs/DOCKER_SETUP.md): Next.js storefront,
+# Express API and a disposable PostgreSQL, built from this repository.
+#
+#   node docker/create-env.mjs                 # once: docker/.env with random local secrets
+#   docker volume create ecommerce-local-pgdata
+#   docker build -t ecommerce-api:local ecommerce-backend
+#   docker build -t ecommerce-web:local apps/web
+#   docker compose -f docker/compose.yaml up -d
+#   docker compose -f docker/compose.yaml --profile seed run --rm seed   # test catalogue
+#   open http://localhost:8080
+#
+# Only the storefront is published, and only on 127.0.0.1. The storefront and
+# the API share one network namespace, like the two containers of one ECS task
+# (docs/AWS_ARCHITECTURE.md): the storefront calls the API on 127.0.0.1:4000,
+# because the storefront refuses a plain-HTTP BACKEND_ORIGIN that is not a
+# loopback address. The database sits on an internal network. Migrations
+# run once per `up` in the one-off "migrate" service before the API starts; the
+# API never migrates. The database volume is external, so no compose command
+# (including `down -v`) can delete it — only an explicit `docker volume rm`.
+#
+# Not for real data: every value comes from docker/.env (git-ignored), which
+# create-env.mjs fills with random, local-only secrets. Never point this file at
+# a production database.
+name: ecommerce-local
+
+x-hardening: &hardening
+  # Root filesystem read-only; writable paths are listed as tmpfs per service.
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  init: true
+  pids_limit: 256
+
+# The images are built explicitly (commands above, as CI does) and never
+# pulled: a same-named image from a registry can never stand in for them.
+x-api-image: &api-image
+  image: ecommerce-api:local
+  pull_policy: never
+
+x-database-url: &database-url
+  DATABASE_URL: postgres://ecommerce:${POSTGRES_PASSWORD:?run node docker/create-env.mjs}@postgres:5432/ecommerce
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    <<: *hardening
+    # The image's entrypoint prepares the data directory as root, then drops to
+    # the postgres user: exactly these capabilities, nothing else.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: ecommerce
+      POSTGRES_DB: ecommerce
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run node docker/create-env.mjs}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    shm_size: 128m
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # A clean shutdown checkpoint, so a stop never leaves the data needing recovery.
+    stop_grace_period: 60s
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+
+  # One-off: applies pending SQL migrations (dist/db/migrations), then exits.
+  migrate:
+    <<: [*hardening, *api-image]
+    # The image's entrypoint is node: the command is the script and its arguments.
+    command: ["dist/scripts/dbMigrate.js", "up"]
+    environment:
+      <<: *database-url
+    networks: [backend]
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 256m
+    cpus: 0.5
+    restart: "no"
+
+  # One-off, on request only (profile "seed"): the disposable test catalogue.
+  seed:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    profiles: ["seed"]
+    <<: *hardening
+    user: "70:70"
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/seed/dev-data.sql"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ecommerce
+      PGDATABASE: ecommerce
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run node docker/create-env.mjs}
+    volumes:
+      - ./seed:/seed:ro
+    networks: [backend]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: "no"
+
+  api:
+    <<: [*hardening, *api-image]
+    environment:
+      <<: *database-url
+      # Local HTTP only: cookie sessions need NODE_ENV=development here, because
+      # the unchanged production guard (auth/config.ts) refuses them with
+      # NODE_ENV=production outside a declared staging service. The image's own
+      # default is NODE_ENV=production.
+      NODE_ENV: development
+      # Inside the shared namespace; never published.
+      PORT: "4000"
+      JWT_SECRET: ${JWT_SECRET:?run node docker/create-env.mjs}
+      DATA_SOURCE_DELIVERY_OPTIONS: postgres
+      DATA_SOURCE_PRODUCTS: postgres
+      DATA_SOURCE_USERS: postgres
+      DATA_SOURCE_CARTS: postgres
+      DATA_SOURCE_ORDERS: postgres
+      AUTH_COOKIE_SESSIONS: "true"
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_ALLOWED_ORIGINS: http://localhost:${WEB_PORT:-8080}
+      AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
+      SHUTDOWN_TIMEOUT_MS: "10000"
+      MONGODB_URI: ""
+    # The namespace both containers share: the database network, and the one
+    # network that carries the storefront's published port.
+    networks: [backend, public]
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:3000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      # Readiness: the database answers and the instance is not draining.
+      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # Longer than SHUTDOWN_TIMEOUT_MS, so a drain is never cut short by SIGKILL.
+    stop_grace_period: 15s
+    mem_limit: 384m
+    cpus: 1.0
+    restart: unless-stopped
+
+  web:
+    image: ecommerce-web:local
+    pull_policy: never
+    <<: *hardening
+    # The API's network namespace (published port 3000 above): like a second
+    # container in the same ECS task.
+    network_mode: "service:api"
+    environment:
+      # The browser only ever calls this host's /api, which the Next.js route
+      # handler forwards to the API over loopback.
+      BACKEND_ORIGIN: http://127.0.0.1:4000
+      # No TRUSTED_CLIENT_IP_HEADER / PROXY_CLIENT_IP_SECRET locally: no proxy
+      # in front sets a client-address header (on AWS see AWS_ARCHITECTURE.md).
+    tmpfs:
+      - /app/.next/cache:uid=65532,gid=65532,mode=0700
+      - /tmp
+    depends_on:
+      # restart: the storefront lives in the API's namespace, so it is
+      # restarted whenever the API container is.
+      api: { condition: service_healthy, restart: true }
+    stop_grace_period: 15s
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+
+networks:
+  # Internal networks have no route outside the host's Docker engine.
+  # Database traffic: postgres, migrate, seed, and the api/web namespace.
+  backend:
+    internal: true
+  # Only for the storefront's published port.
+  public: {}
+
+volumes:
+  # Created once by hand (`docker volume create ecommerce-local-pgdata`) and
+  # never removed by compose, so `docker compose down -v` keeps the data.
+  pgdata:
+    external: true
+    name: ecommerce-local-pgdata
