@@ -67,8 +67,18 @@ jobs:
           docker compose -f docker/compose.yaml up -d --wait
           docker compose -f docker/compose.yaml --profile seed run --rm seed
 
+      # Every FAIL line also becomes an annotation (readable without the raw log); the full
+      # output is kept in the evidence artifact. The step still fails on any failed check.
       - name: Container integration test (incl. graceful stop and restarts)
-        run: node docker/test/container-integration.mjs --restart
+        run: |
+          set -o pipefail
+          status=0
+          node docker/test/container-integration.mjs --restart 2>&1 | tee evidence/container-integration.log || status=$?
+          grep -E '^FAIL ' evidence/container-integration.log | while IFS= read -r line; do
+            echo "::error title=Container check failed::${line}"
+          done || true
+          tail -n 1 evidence/container-integration.log | sed 's/^/::notice title=Container checks::/' || true
+          exit "$status"
 
       - name: Container logs
         if: always()

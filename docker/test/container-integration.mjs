@@ -215,21 +215,30 @@ check("sessions stored hashed (no raw token in the database)", sql(`SELECT count
 
 // --- Graceful shutdown and restart (optional, --restart) -----------------------------------
 if (process.argv.includes("--restart")) {
-  const since = new Date().toISOString();
-  docker(["stop", "api"]);
-  const exitCode = execFileSync("docker", ["inspect", "-f", "{{.State.ExitCode}}", docker(["ps", "-aq", "api"]).trim()], { encoding: "utf8" }).trim();
-  const shutdownLog = docker(["logs", "--no-color", "--since", since, "api"]);
-  check("API stops on SIGTERM with exit code 0 (clean drain)", exitCode === "0", `exit ${exitCode}: ${shutdownLog.slice(-300)}`);
-  // `restart api` also restarts web, which lives in the API's network namespace
-  // (depends_on restart: true); `up --wait` then waits for both to be healthy.
-  docker(["restart", "api"]);
-  docker(["up", "-d", "--wait"]);
-  const after = browser();
-  const back = await after.call("POST", "/api/auth/session", { body: { email: bob.email, password: PASSWORD } });
-  check("after restart: data kept, Bob signs in, his cart is intact", back.status === 200 && (await after.call("GET", "/api/cart-items")).json?.length === 1);
-  docker(["restart", "postgres"]);
-  docker(["up", "-d", "--wait"]);
-  check("after a database restart: API ready again, orders intact", inApi("/readyz").startsWith("200") && sql("SELECT count(*) FROM orders") !== "0");
+  try {
+    // Bob's cart depends on whether he won the stock race above: compare it with itself.
+    const bobCartBefore = JSON.stringify((await bob.tab.call("GET", "/api/cart-items")).json?.map((line) => [line.productId, line.quantity]));
+    const ordersBefore = sql("SELECT count(*) FROM orders");
+    const since = new Date().toISOString();
+    docker(["stop", "api"]);
+    const exitCode = execFileSync("docker", ["inspect", "-f", "{{.State.ExitCode}}", docker(["ps", "-aq", "api"]).trim()], { encoding: "utf8" }).trim();
+    const shutdownLog = docker(["logs", "--no-color", "--since", since, "api"]);
+    check("API stops on SIGTERM with exit code 0 (clean drain)", exitCode === "0", `exit ${exitCode}: ${shutdownLog.slice(-300)}`);
+    // web lives in the API's network namespace, so it is restarted with the API. Newer Compose does
+    // that itself (depends_on restart: true); restarting it explicitly works on every version.
+    docker(["restart", "api"]);
+    docker(["restart", "web"]);
+    docker(["up", "-d", "--wait"]);
+    const after = browser();
+    const back = await after.call("POST", "/api/auth/session", { body: { email: bob.email, password: PASSWORD } });
+    const bobCartAfter = JSON.stringify((await after.call("GET", "/api/cart-items")).json?.map((line) => [line.productId, line.quantity]));
+    check("after an API restart: data kept, Bob signs in, his cart unchanged", back.status === 200 && bobCartAfter === bobCartBefore, `${back.status} ${bobCartBefore} -> ${bobCartAfter}`);
+    docker(["restart", "postgres"]);
+    docker(["up", "-d", "--wait"]);
+    check("after a database restart: API ready again, orders intact", inApi("/readyz").startsWith("200") && sql("SELECT count(*) FROM orders") === ordersBefore, `orders ${ordersBefore} -> ${sql("SELECT count(*) FROM orders")}`);
+  } catch (error) {
+    check("restart sequence completed", false, error instanceof Error ? error.message.split("\n")[0] : String(error));
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
