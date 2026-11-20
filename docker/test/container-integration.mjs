@@ -8,8 +8,9 @@
 //   node docker/test/container-integration.mjs --restart  # plus graceful stop/restart checks
 //
 // Prints PASS/FAIL per check and exits 1 on any failure. Never prints cookie or token values.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const ORIGIN = process.env.STACK_ORIGIN ?? "http://localhost:8080";
@@ -28,6 +29,10 @@ const check = (name, ok, detail = "") => {
 };
 
 const docker = (args, input) => execFileSync("docker", [...COMPOSE, ...args], { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+// Stops and restarts must not block the event loop: while it is blocked, fetch cannot notice that the
+// restart closed its pooled keep-alive connections, and then reuses a dead one (ECONNRESET on Linux).
+const execFileAsync = promisify(execFile);
+const dockerAsync = async (args) => (await execFileAsync("docker", [...COMPOSE, ...args], { encoding: "utf8" })).stdout;
 const sql = (query) => docker(["exec", "-T", "postgres", "psql", "-U", "ecommerce", "-d", "ecommerce", "-Atc", query]).trim();
 const inApi = (path) => {
   const script = `fetch('http://127.0.0.1:4000${path}').then(async r=>console.log(r.status, (await r.text()).slice(0,200)),e=>console.log('ERR',e.message))`;
@@ -220,24 +225,24 @@ if (process.argv.includes("--restart")) {
     const bobCartBefore = JSON.stringify((await bob.tab.call("GET", "/api/cart-items")).json?.map((line) => [line.productId, line.quantity]));
     const ordersBefore = sql("SELECT count(*) FROM orders");
     const since = new Date().toISOString();
-    docker(["stop", "api"]);
+    await dockerAsync(["stop", "api"]);
     const exitCode = execFileSync("docker", ["inspect", "-f", "{{.State.ExitCode}}", docker(["ps", "-aq", "api"]).trim()], { encoding: "utf8" }).trim();
     const shutdownLog = docker(["logs", "--no-color", "--since", since, "api"]);
     check("API stops on SIGTERM with exit code 0 (clean drain)", exitCode === "0", `exit ${exitCode}: ${shutdownLog.slice(-300)}`);
     // web lives in the API's network namespace, so it is restarted with the API. Newer Compose does
     // that itself (depends_on restart: true); restarting it explicitly works on every version.
-    docker(["restart", "api"]);
-    docker(["restart", "web"]);
-    docker(["up", "-d", "--wait"]);
+    await dockerAsync(["restart", "api"]);
+    await dockerAsync(["restart", "web"]);
+    await dockerAsync(["up", "-d", "--wait"]);
     const after = browser();
     const back = await after.call("POST", "/api/auth/session", { body: { email: bob.email, password: PASSWORD } });
     const bobCartAfter = JSON.stringify((await after.call("GET", "/api/cart-items")).json?.map((line) => [line.productId, line.quantity]));
     check("after an API restart: data kept, Bob signs in, his cart unchanged", back.status === 200 && bobCartAfter === bobCartBefore, `${back.status} ${bobCartBefore} -> ${bobCartAfter}`);
-    docker(["restart", "postgres"]);
-    docker(["up", "-d", "--wait"]);
+    await dockerAsync(["restart", "postgres"]);
+    await dockerAsync(["up", "-d", "--wait"]);
     check("after a database restart: API ready again, orders intact", inApi("/readyz").startsWith("200") && sql("SELECT count(*) FROM orders") === ordersBefore, `orders ${ordersBefore} -> ${sql("SELECT count(*) FROM orders")}`);
   } catch (error) {
-    check("restart sequence completed", false, error instanceof Error ? error.message.split("\n")[0] : String(error));
+    check("restart sequence completed", false, error instanceof Error ? `${error.message.split("\n")[0]}${error.cause?.code ? ` (${error.cause.code})` : ""}` : String(error));
   }
 }
 
